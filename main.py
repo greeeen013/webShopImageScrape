@@ -11,18 +11,28 @@ import json
 import os
 from dotenv import load_dotenv
 
-DODAVATELE = {
-    "api": "161784",
-    "everit": "268493",
-    #"fourcom (312585)": "312585", # LOGIN
-    "octo it": "348651",
-    "NetFactory": "351191",
-    "Kosatec": "",
-    "Dcs (nekvalitní)": ""
-    #"Notebooksbilliger ()": "" # nescrapovaci stranka
-    #"itplanet (338745)": "338745",
-}
+from ShopScraper import octo_get_product_images, directdeal_get_product_images, api_get_product_images, easynotebooks_get_product_images, kosatec_get_product_images, dcs_get_product_images, incomgroup_get_product_images, wortmann_get_product_images, wave_get_product_images
+from ShopSelenium import fourcom_get_product_images, notebooksbilliger_get_product_images, komputronik_get_product_images
 
+
+DODAVATELE = {
+    # klasickej scrape
+    "octo it": {"kod": "348651", "funkce": octo_get_product_images},
+    "directdeal/everit": {"kod": "268493", "funkce": directdeal_get_product_images},
+    "api": {"kod": "161784", "funkce": api_get_product_images},
+    "NetFactory/easynotebooks": {"kod": "347114", "funkce": easynotebooks_get_product_images},
+    "Kosatec": {"kod": "165463", "funkce": kosatec_get_product_images},
+    "Dcs (nekvalitní)": {"kod": "319004", "funkce": dcs_get_product_images},
+    "IncomGroup": {"kod": "169701", "funkce": incomgroup_get_product_images},
+    "Wortmann": {"kod": "190157", "funkce": wortmann_get_product_images},
+    "Wave": {"kod": "115565", "funkce": wave_get_product_images},
+
+    # selenium
+    "notebooksbilliger (selenium)": {"kod": "340871", "funkce": notebooksbilliger_get_product_images},
+    "fourcom (selenium)": {"kod": "312585", "funkce": fourcom_get_product_images},
+    "Komputronik (selenium)": {"kod": "104584", "funkce": komputronik_get_product_images},
+
+}
 POCTY_PRODUKTU = [25, 50]
 OBRAZKY_NA_RADEK = ["2", "3", "4", "5", "6", "nekonečno"]
 
@@ -117,21 +127,6 @@ class ObrFormApp:
             'name': 'SivName',
             'supplier': 'SivComId',
             'notes': 'SivNotePic'
-        }
-
-        # Mapování funkcí pro jednotlivé dodavatele
-        from ShopScraper import octo_get_product_images, directdeal_get_product_images, api_get_product_images, easynotebooks_get_product_images, kosatec_get_product_images, dcs_get_product_images
-
-        self.dodavatele_funkce = {
-            "161784": api_get_product_images,
-            "268493": directdeal_get_product_images, # EVERIT
-            # "312585": fourcom_get_product_images, # login
-            "348651": octo_get_product_images,
-            "351191": easynotebooks_get_product_images,
-            #"338745": itplanet_get_product_image
-            "": kosatec_get_product_images,
-            "": dcs_get_product_images,
-
         }
 
         print("[DEBUG] Inicializace GUI...")
@@ -354,8 +349,9 @@ class ObrFormApp:
     def combo_selected(self, event):
         """Zpracuje výběr dodavatele a počtu produktů."""
         self.vybrany_dodavatel = self.combo_dodavatel.get()
-        self.vybrany_dodavatel_kod = DODAVATELE[self.vybrany_dodavatel]
-        self.buffer_size = int(self.combo_pocet.get())
+        info = DODAVATELE[self.vybrany_dodavatel]
+        self.vybrany_dodavatel_kod = info["kod"]
+        self.vybrana_funkce = info["funkce"]
 
         print(
             f"[DEBUG] Vybrán dodavatel: {self.vybrany_dodavatel}, kód: {self.vybrany_dodavatel_kod}, počet: {self.buffer_size}")
@@ -535,7 +531,7 @@ class ObrFormApp:
             print(f"[THREAD] Načítám obrázky pro produkt: {kod}")
 
             # ZÍSKÁNÍ FUNKCE PRO VYBRANÉHO DODAVATELE
-            funkce_pro_dodavatele = self.dodavatele_funkce.get(self.vybrany_dodavatel_kod)
+            funkce_pro_dodavatele = self.vybrana_funkce
 
             if not funkce_pro_dodavatele:
                 print(f"[CHYBA] Pro dodavatele {self.vybrany_dodavatel_kod} není definována funkce")
@@ -745,7 +741,12 @@ class ObrFormApp:
             messagebox.showerror("Chyba", f"Chyba při ukládání:\n{e}")
         finally:
             self.close_database()
-            combo_selected()
+
+            # Automaticky načíst další produkty
+            if self.vybrany_dodavatel and self.vybrany_dodavatel_kod:
+                self.combo_selected(None)
+            else:
+                self.hide_overlay()
 
     def zrusit_vse(self):
         """Zruší všechny produkty bez uložení."""
