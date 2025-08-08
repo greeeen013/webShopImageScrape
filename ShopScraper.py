@@ -742,7 +742,8 @@ async def wave_get_product_images(PNumber):
 
 
 if __name__ == "__main__":
-    print(asyncio.run(wave_get_product_images("SM-G766BZKDEEB")))
+    #print(asyncio.run(wave_get_product_images("SM-G766BZKDEEB")))
     #print(asyncio.run(incomgroup_get_product_images("VX2479-HD-PRO")))
-    #print(asyncio.run(wortmann_get_product_images("3030238")))
+    print(asyncio.run(wortmann_get_product_images(5310021)))
     #print(asyncio.run(dcs_get_product_images(1002233635)))
+    #incomegroup nefunguje
