@@ -15,23 +15,24 @@ from ShopScraper import octo_get_product_images, directdeal_get_product_images, 
 from ShopSelenium import fourcom_get_product_images, notebooksbilliger_get_product_images, komputronik_get_product_images
 
 
+# ... (původní kód)
+
 DODAVATELE = {
     # klasickej scrape
-    "octo it": {"kod": "348651", "funkce": octo_get_product_images},
-    "directdeal/everit": {"kod": "268493", "funkce": directdeal_get_product_images},
-    "api": {"kod": "161784", "funkce": api_get_product_images},
-    "NetFactory/easynotebooks": {"kod": "347114", "funkce": easynotebooks_get_product_images},
-    "Kosatec": {"kod": "165463", "funkce": kosatec_get_product_images},
-    "Dcs (nekvalitní)": {"kod": "319004", "funkce": dcs_get_product_images},
-    "IncomGroup": {"kod": "169701", "funkce": incomgroup_get_product_images},
-    "Wortmann": {"kod": "190157", "funkce": wortmann_get_product_images},
-    "Wave": {"kod": "115565", "funkce": wave_get_product_images},
+    "octo it": {"kod": "348651", "produkt_dotaz_kod": "SivCode", "funkce": octo_get_product_images},
+    "directdeal/everit": {"kod": "268493", "produkt_dotaz_kod": "SivCode", "funkce": directdeal_get_product_images},
+    "api": {"kod": "161784", "produkt_dotaz_kod": "SivCode", "funkce": api_get_product_images},
+    "NetFactory/easynotebooks": {"kod": "351191", "produkt_dotaz_kod": "SivCode", "funkce": easynotebooks_get_product_images},
+    "Kosatec": {"kod": "165463", "produkt_dotaz_kod": "SivCode", "funkce": kosatec_get_product_images},
+    "Dcs (nekvalitní)": {"kod": "319004", "produkt_dotaz_kod": "SivCode", "funkce": dcs_get_product_images},
+    "IncomGroup": {"kod": "169701", "produkt_dotaz_kod": "SivCode2", "funkce": incomgroup_get_product_images},
+    "Wortmann": {"kod": "190157", "produkt_dotaz_kod": "SivCode", "funkce": wortmann_get_product_images},
+    "Wave": {"kod": "115565", "produkt_dotaz_kod": "SivCode", "funkce": wave_get_product_images},
 
     # selenium
-    "notebooksbilliger (selenium)": {"kod": "340871", "funkce": notebooksbilliger_get_product_images},
-    "fourcom (selenium)": {"kod": "312585", "funkce": fourcom_get_product_images},
-    "Komputronik (selenium)": {"kod": "104584", "funkce": komputronik_get_product_images},
-
+    "notebooksbilliger (selenium)": {"kod": "340871", "produkt_dotaz_kod": "SivCode", "funkce": notebooksbilliger_get_product_images},
+    "fourcom (selenium)": {"kod": "312585", "produkt_dotaz_kod": "SivCode", "funkce": fourcom_get_product_images},
+    "Komputronik (selenium)": {"kod": "104584", "produkt_dotaz_kod": "SivCode", "funkce": komputronik_get_product_images},
 }
 POCTY_PRODUKTU = [25, 50]
 OBRAZKY_NA_RADEK = ["2", "3", "4", "5", "6", "nekonečno"]
@@ -126,7 +127,8 @@ class ObrFormApp:
             'code': 'SivCode',
             'name': 'SivName',
             'supplier': 'SivComId',
-            'notes': 'SivNotePic'
+            'notes': 'SivNotePic',
+            'pairing': 'SivStiId'
         }
 
         print("[DEBUG] Inicializace GUI...")
@@ -408,11 +410,13 @@ class ObrFormApp:
 
             # Získání ignorovaných kódů pro tohoto dodavatele
             ignored_codes = self.ignored_codes.get(self.vybrany_dodavatel_kod, [])
-            ignored_condition = ""
-            params = [self.vybrany_dodavatel_kod]
 
-            # Před hlavním dotazem
-            self.cursor.execute("CREATE TABLE #IgnoredCodes (SivCode VARCHAR(50))")
+            # Před hlavním dotazem - s explicitní kolací
+            self.cursor.execute("""
+                CREATE TABLE #IgnoredCodes (
+                    SivCode VARCHAR(50) COLLATE DATABASE_DEFAULT
+                )
+            """)
 
             # Vložení ignorovaných kódů
             if ignored_codes:
@@ -425,14 +429,15 @@ class ObrFormApp:
                 FROM [{self.table_name}] 
                 WHERE [{self.column_mapping['supplier']}] = ?
                 AND ([{self.column_mapping['notes']}] IS NULL OR [{self.column_mapping['notes']}] = '')
+                AND ([{self.column_mapping['pairing']}] IS NOT NULL AND [{self.column_mapping['pairing']}] <> '')
                 AND NOT EXISTS (
-                    SELECT 1 FROM #IgnoredCodes WHERE SivCode = [{self.table_name}].[{self.column_mapping['code']}]
-                )  ORDER BY NEWID()
-            """ # ORDER BY NEWID() aby to nebylo pokaždé stejné
+                    SELECT 1 FROM #IgnoredCodes WHERE SivCode = [{self.table_name}].[{self.column_mapping['code']}] COLLATE DATABASE_DEFAULT
+                ) ORDER BY NEWID()
+            """
             print(f"[DEBUG] Provádím dotaz: {query}")
-            print(f"[DEBUG] Parametry: {params}")
+            print(f"[DEBUG] Parametry: {[self.vybrany_dodavatel_kod]}")
 
-            self.cursor.execute(query, params)
+            self.cursor.execute(query, [self.vybrany_dodavatel_kod])
             self.filtrovane_produkty = [
                 {'SivCode': row.SivCode, 'SivName': row.SivName}
                 for row in self.cursor.fetchall()
@@ -465,7 +470,7 @@ class ObrFormApp:
             print(f"[CHYBA] Při načítání produktů: {e}")
             self.root.after(0, lambda: messagebox.showerror("Chyba", f"Chyba při načítání produktů:\n{e}"))
             self.root.after(0, self.loading_screen.close)
-            self.root.after(0, self.hide_overlay)  # Přidáno skrytí overlay při chybě
+            self.root.after(0, self.hide_overlay)
             self.close_database()
 
     def clear_gui(self):
