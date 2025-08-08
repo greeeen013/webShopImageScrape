@@ -324,9 +324,9 @@ async def komputronik_get_product_images(PNumber):
 if __name__ == "__main__":
     import asyncio
 
-    #print("Testing Notebooksbilliger...")
-    #images = asyncio.run(notebooksbilliger_get_product_images("A1084550"))
-    #print(images)
+    print("Testing Notebooksbilliger...")
+    images = asyncio.run(notebooksbilliger_get_product_images("A1084550"))
+    print(images)
 
     #print("\nTesting Komputronik...")
     #komputronik_images = asyncio.run(komputronik_get_product_images("MOD-PHA-047"))
