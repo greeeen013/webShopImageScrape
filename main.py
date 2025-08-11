@@ -19,21 +19,22 @@ from ShopSelenium import fourcom_get_product_images, notebooksbilliger_get_produ
 
 DODAVATELE = {
     # klasickej scrape
-    "octo it": {"kod": "348651", "produkt_dotaz_kod": "SivCode", "funkce": octo_get_product_images},
-    "directdeal/everit": {"kod": "268493", "produkt_dotaz_kod": "SivCode", "funkce": directdeal_get_product_images},
-    "api": {"kod": "161784", "produkt_dotaz_kod": "SivCode", "funkce": api_get_product_images},
-    "NetFactory/easynotebooks": {"kod": "351191", "produkt_dotaz_kod": "SivCode", "funkce": easynotebooks_get_product_images},
-    "Kosatec": {"kod": "165463", "produkt_dotaz_kod": "SivCode", "funkce": kosatec_get_product_images},
-    "Dcs (nekvalitní)": {"kod": "319004", "produkt_dotaz_kod": "SivCode", "funkce": dcs_get_product_images},
-    "IncomGroup": {"kod": "169701", "produkt_dotaz_kod": "SivCode2", "funkce": incomgroup_get_product_images},
-    "Wortmann": {"kod": "190157", "produkt_dotaz_kod": "SivCode", "funkce": wortmann_get_product_images},
-    "Wave": {"kod": "115565", "produkt_dotaz_kod": "SivCode", "funkce": wave_get_product_images},
+    "octo it": {"kod": "348651", "produkt_dotaz_kod": "SivCode", "funkce": octo_get_product_images, "paralelně": True},
+    "directdeal/everit": {"kod": "268493", "produkt_dotaz_kod": "SivCode", "funkce": directdeal_get_product_images, "paralelně": True},
+    "api": {"kod": "161784", "produkt_dotaz_kod": "SivCode", "funkce": api_get_product_images, "paralelně": True},
+    "NetFactory/easynotebooks": {"kod": "351191", "produkt_dotaz_kod": "SivCode", "funkce": easynotebooks_get_product_images, "paralelně": True},
+    "Kosatec": {"kod": "165463", "produkt_dotaz_kod": "SivCode", "funkce": kosatec_get_product_images, "paralelně": True},
+    "Dcs (nekvalitní)": {"kod": "319004", "produkt_dotaz_kod": "SivCode", "funkce": dcs_get_product_images, "paralelně": True},
+    "IncomGroup": {"kod": "169701", "produkt_dotaz_kod": "SivCode2", "funkce": incomgroup_get_product_images, "paralelně": True},
+    "Wortmann": {"kod": "190157", "produkt_dotaz_kod": "SivCode", "funkce": wortmann_get_product_images, "paralelně": True},
+    "Wave": {"kod": "115565", "produkt_dotaz_kod": "SivCode", "funkce": wave_get_product_images, "paralelně": True},
 
     # selenium
-    "notebooksbilliger (selenium)": {"kod": "340871", "produkt_dotaz_kod": "SivCode", "funkce": notebooksbilliger_get_product_images},
-    "fourcom (selenium)": {"kod": "312585", "produkt_dotaz_kod": "SivCode", "funkce": fourcom_get_product_images},
-    "Komputronik (selenium)": {"kod": "104584", "produkt_dotaz_kod": "SivCode", "funkce": komputronik_get_product_images},
+    "notebooksbilliger (selenium)": {"kod": "340871", "produkt_dotaz_kod": "SivCode", "funkce": notebooksbilliger_get_product_images, "paralelně": False},
+    "fourcom (selenium)": {"kod": "312585", "produkt_dotaz_kod": "SivCode", "funkce": fourcom_get_product_images, "paralelně": False},
+    "Komputronik (selenium)": {"kod": "104584", "produkt_dotaz_kod": "SivCode", "funkce": komputronik_get_product_images, "paralelně": False},
 }
+
 POCTY_PRODUKTU = [25, 50]
 OBRAZKY_NA_RADEK = ["2", "3", "4", "5", "6", "nekonečno"]
 
@@ -408,6 +409,12 @@ class ObrFormApp:
                 self.root.after(0, self.loading_screen.close)
                 return
 
+            # Získání informací o dodavateli
+            supplier_info = DODAVATELE[self.vybrany_dodavatel]
+            self.vybrany_dodavatel_kod = supplier_info["kod"]
+            self.vybrana_funkce = supplier_info["funkce"]
+            produkt_dotaz_kod = supplier_info["produkt_dotaz_kod"]
+
             # Získání ignorovaných kódů pro tohoto dodavatele
             ignored_codes = self.ignored_codes.get(self.vybrany_dodavatel_kod, [])
 
@@ -423,17 +430,20 @@ class ObrFormApp:
                 self.cursor.executemany("INSERT INTO #IgnoredCodes VALUES (?)",
                                         [(code,) for code in ignored_codes])
 
-            # Hlavní dotaz
-            query = f"""
-                SELECT TOP {self.buffer_size} SivCode, SivName 
-                FROM [{self.table_name}] 
-                WHERE [{self.column_mapping['supplier']}] = ?
-                AND ([{self.column_mapping['notes']}] IS NULL OR [{self.column_mapping['notes']}] = '')
-                AND ([{self.column_mapping['pairing']}] IS NOT NULL AND [{self.column_mapping['pairing']}] <> '')
-                AND NOT EXISTS (
-                    SELECT 1 FROM #IgnoredCodes WHERE SivCode = [{self.table_name}].[{self.column_mapping['code']}] COLLATE DATABASE_DEFAULT
-                ) ORDER BY NEWID()
-            """
+                # Hlavní dotaz
+                query = f"""
+                            SELECT TOP {self.buffer_size} 
+                                [{produkt_dotaz_kod}] AS SivCode, 
+                                SivName 
+                            FROM [{self.table_name}] 
+                            WHERE [{self.column_mapping['supplier']}] = ?
+                            AND ([{self.column_mapping['notes']}] IS NULL OR [{self.column_mapping['notes']}] = '')
+                            AND ([{self.column_mapping['pairing']}] IS NOT NULL AND [{self.column_mapping['pairing']}] <> '')
+                            AND NOT EXISTS (
+                                SELECT 1 FROM #IgnoredCodes 
+                                WHERE SivCode = [{self.table_name}].[{produkt_dotaz_kod}] COLLATE DATABASE_DEFAULT
+                            ) ORDER BY NEWID()
+                        """
             print(f"[DEBUG] Provádím dotaz: {query}")
             print(f"[DEBUG] Parametry: {[self.vybrany_dodavatel_kod]}")
 
@@ -482,9 +492,20 @@ class ObrFormApp:
         """Spustí asynchronní načítání obrázků s optimalizovaným počtem vláken."""
         if not self.loading_active:
             self.loading_active = True
-            print(f"[THREAD] Spouštím {self.max_threads} vláken")
 
-            for _ in range(min(self.max_threads, len(self.produkty_k_zpracovani))):
+            # Získání informací o paralelním režimu pro dodavatele
+            supplier_info = DODAVATELE[self.vybrany_dodavatel]
+            paralelne = supplier_info.get("paralelně", True)  # Výchozí True pokud není definováno
+
+            # Nastavení max_threads podle paralelního režimu
+            if paralelne:
+                max_threads = self.max_threads
+            else:
+                max_threads = 1  # Sekvenční režim
+
+            print(f"[THREAD] Spouštím {max_threads} vláken (paralelně: {paralelne})")
+
+            for _ in range(min(max_threads, len(self.produkty_k_zpracovani))):
                 if self.produkty_k_zpracovani:
                     produkt = self.produkty_k_zpracovani.pop(0)
                     t = threading.Thread(target=self.load_product_images, args=(produkt,))
@@ -500,7 +521,17 @@ class ObrFormApp:
         # Odstranění ukončených vláken
         self.loading_threads = [t for t in self.loading_threads if t.is_alive()]
 
-        free_slots = self.max_threads - len(self.loading_threads)
+        # Získání informací o paralelním režimu pro dodavatele
+        supplier_info = DODAVATELE[self.vybrany_dodavatel]
+        paralelne = supplier_info.get("paralelně", True)  # Výchozí True pokud není definováno
+
+        # Nastavení max_threads podle paralelního režimu
+        if paralelne:
+            max_threads = self.max_threads
+        else:
+            max_threads = 1  # Sekvenční režim
+
+        free_slots = max_threads - len(self.loading_threads)
 
         # Spuštění nových vláken pro volné sloty
         for _ in range(min(free_slots, len(self.produkty_k_zpracovani))):

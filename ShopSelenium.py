@@ -66,6 +66,7 @@ async def notebooksbilliger_get_product_images(PNumber):
     chrome_options = Options()
     chrome_options.page_load_strategy = "eager"
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_argument("--headless=new")
     chrome_options.add_argument(
         "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.5735.199 Safari/537.36"
     )
