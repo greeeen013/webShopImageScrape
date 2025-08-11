@@ -430,20 +430,21 @@ class ObrFormApp:
                 self.cursor.executemany("INSERT INTO #IgnoredCodes VALUES (?)",
                                         [(code,) for code in ignored_codes])
 
-                # Hlavní dotaz
-                query = f"""
-                            SELECT TOP {self.buffer_size} 
-                                [{produkt_dotaz_kod}] AS SivCode, 
-                                SivName 
-                            FROM [{self.table_name}] 
-                            WHERE [{self.column_mapping['supplier']}] = ?
-                            AND ([{self.column_mapping['notes']}] IS NULL OR [{self.column_mapping['notes']}] = '')
-                            AND ([{self.column_mapping['pairing']}] IS NOT NULL AND [{self.column_mapping['pairing']}] <> '')
-                            AND NOT EXISTS (
-                                SELECT 1 FROM #IgnoredCodes 
-                                WHERE SivCode = [{self.table_name}].[{produkt_dotaz_kod}] COLLATE DATABASE_DEFAULT
-                            ) ORDER BY NEWID()
-                        """
+            # Hlavní dotaz - definován vždy
+            query = f"""
+                SELECT TOP {self.buffer_size} 
+                    [{produkt_dotaz_kod}] AS SivCode, 
+                    SivName 
+                FROM [{self.table_name}] 
+                WHERE [{self.column_mapping['supplier']}] = ?
+                AND ([{self.column_mapping['notes']}] IS NULL OR [{self.column_mapping['notes']}] = '')
+                AND ([{self.column_mapping['pairing']}] IS NOT NULL AND [{self.column_mapping['pairing']}] <> '')
+                AND NOT EXISTS (
+                    SELECT 1 FROM #IgnoredCodes 
+                    WHERE SivCode = [{self.table_name}].[{produkt_dotaz_kod}] COLLATE DATABASE_DEFAULT
+                ) ORDER BY NEWID()
+            """
+
             print(f"[DEBUG] Provádím dotaz: {query}")
             print(f"[DEBUG] Parametry: {[self.vybrany_dodavatel_kod]}")
 
@@ -591,7 +592,12 @@ class ObrFormApp:
             # Načti a zobraz obrázky
             for url in urls:
                 try:
-                    r = requests.get(url, timeout=10)
+                    headers = {
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+                        "Referer": "https://www.incomgroup.pl/"  # aspoň doména; ideálně skutečný produktový URL
+                    }
+                    r = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
 
                     # Zkontroluj, zda odpověď obsahuje obrázek
                     if 'image' not in r.headers.get('Content-Type', '').lower():

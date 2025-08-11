@@ -113,8 +113,8 @@ async def notebooksbilliger_get_product_images(PNumber):
     except Exception as e:
         logger.error(f"Error in notebooksbilliger_get_product_images: {str(e)}", exc_info=True)
         try:
-            driver.save_screenshot("debug.png")
-            logger.debug("Saved screenshot to debug.png")
+            driver.save_screenshot("debug_notebooksbilliger.png")
+            logger.debug("Saved screenshot to debug_notebooksbilliger.png")
             logger.debug(f"Current page source (first 2000 chars):\n{driver.page_source[:2000]}")
         except:
             pass
@@ -325,14 +325,9 @@ async def komputronik_get_product_images(PNumber):
 if __name__ == "__main__":
     import asyncio
 
-    print("Testing Notebooksbilliger...")
-    images = asyncio.run(notebooksbilliger_get_product_images("A1084550"))
-    print(images)
-
-    #print("\nTesting Komputronik...")
-    #komputronik_images = asyncio.run(komputronik_get_product_images("MOD-PHA-047"))
-    #print(komputronik_images)
-
-    #print("\nTesting Fourcom...")
-    #fourcom_images = asyncio.run(fourcom_get_product_images("PB5W0001SE"))
-    #print(fourcom_images)
+    #Notebooksbilliger test
+    print(asyncio.run(notebooksbilliger_get_product_images("A1064333")))
+    #Komputronik test
+    #print(asyncio.run(komputronik_get_product_images("MOD-PHA-047")))
+    #Fourcom test
+    #print(asyncio.run(fourcom_get_product_images("PB5W0001SE")))
