@@ -26,7 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def get_chrome_driver(headless=True):
+def get_chrome_driver(headless=False):
     """Vytvoří Chrome driver s automatickou detekcí verze Chrome"""
     chrome_options = uc.ChromeOptions()
     chrome_options.page_load_strategy = "eager"
@@ -125,104 +125,122 @@ async def notebooksbilliger_get_product_images(PNumber):
         except:
             pass
 
+
 async def fourcom_get_product_images(PNumber):
+    """Získává obrázky produktů z fourcom.dk pro zadané PNumber"""
     driver = get_chrome_driver()
     try:
         load_dotenv()
-        login = os.getenv("FOURCOM_LOGIN")
-        password = os.getenv("FOURCOM_PASSWORD")
+        FOURCOM_LOGIN = os.getenv("FOURCOM_LOGIN")
+        FOURCOM_PASSWORD = os.getenv("FOURCOM_PASSWORD")
 
-        # Ověření, že přihlašovací údaje existují
-        if not login or not password:
-            logger.error("FOURCOM_LOGIN or FOURCOM_PASSWORD not found in .env file")
+        if not FOURCOM_LOGIN or not FOURCOM_PASSWORD:
+            logger.error("FourCom credentials not found in .env file")
             return []
 
-        # 1. Přihlášení na stránku
-        login_url = "https://en.fourcom.dk"
-        logger.debug(f"Opening login page: {login_url}")
-        driver.get(login_url)
+        # 1. Navigace na hlavní stránku
+        logger.debug("Navigating to https://en.fourcom.dk")
+        driver.get("https://en.fourcom.dk")
 
-        # Accept cookies if present
-        try:
-            WebDriverWait(driver, 5).until(
-                EC.element_to_be_clickable((By.ID, "cookiescript_accept"))
-            ).click()
-            logger.debug("Accepted cookies")
-        except:
-            logger.debug("No cookie banner found")
-
-        # Vyplnění přihlašovacích údajů
+        # 2. Přihlášení
+        logger.debug("Filling login form")
         WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.ID, "form-field-kundenummer"))
-        ).send_keys(login)
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "input#form-field-kundenummer"))
+        ).send_keys(FOURCOM_LOGIN)
 
-        driver.find_element(By.ID, "form-field-password").send_keys(password)
+        driver.find_element(
+            By.CSS_SELECTOR, "input#form-field-password"
+        ).send_keys(FOURCOM_PASSWORD)
 
-        # Kliknutí na přihlášení
-        driver.find_element(By.CSS_SELECTOR, "button.elementor-button[type='submit']").click()
+        driver.find_element(
+            By.CSS_SELECTOR, "button.elementor-button[type='submit']"
+        ).click()
         logger.debug("Login submitted")
 
-        # 2. Vyhledání produktu
-        search_input = WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='ItemSearchPage-text']"))
+        # 3. Vyhledávání produktu
+        logger.debug(f"Searching for product: {PNumber}")
+        search_input = WebDriverWait(driver, 15).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "input[name='ItemSearchPage-text']"))
         )
+        search_input.clear()
         search_input.send_keys(PNumber)
+        search_input.send_keys(Keys.RETURN)
+        logger.debug("Search submitted with Enter key")
 
-        # Zpracování návrhů vyhledávání
-        try:
-            WebDriverWait(driver, 10).until(
-                EC.visibility_of_element_located((By.CSS_SELECTOR, "div.simple-autosuggester-items"))
-            )
-            suggestion_item = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH,
-                                            f"//div[contains(@class, 'simple-autosuggester-items-item')]//em[text()='{PNumber}']/ancestor::a"))
-            )
-            suggestion_item.click()
-            logger.debug("Clicked on search suggestion")
-        except Exception as e:
-            logger.error(f"Could not find search suggestion: {str(e)}")
-            search_input.send_keys(Keys.RETURN)
+        # 4. Čekání na výsledky vyhledávání a kliknutí na první produkt
+        logger.debug("Waiting for search results and clicking first product")
+        first_product = WebDriverWait(driver, 15).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "div.thumb-item div.ajax-load-product"))
+        )
 
-        # 3. Získání obrázků produktu
+        # Klik na produkt pomocí JavaScriptu pro větší spolehlivost
+        driver.execute_script("arguments[0].click();", first_product)
+        logger.debug("First product clicked")
+
+        # 5. Čekání na načtení detailu produktu
+        WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div.thumbs, div.product-item"))
+        )
+
+        # 6. Získání obrázků z galerie - PRVNÍ METODA (standardní)
+        logger.debug("Extracting product images - trying primary method")
         image_urls = []
         try:
-            WebDriverWait(driver, 25).until(
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, "div.thumbs a[data-fancybox='gallery'], div.itemBoxImages img"))
-            )
-
-            # Zkusíme najít obrázky v galerii
-            gallery_links = driver.find_elements(By.CSS_SELECTOR, "div.thumbs a[data-fancybox='gallery']")
-            for link in gallery_links:
-                img_url = link.get_attribute("href")
-                if img_url:
-                    if img_url.startswith("/"):
-                        img_url = f"https://en.fourcom.dk{img_url}"
-                    image_urls.append(img_url)
-
-            # Pokud není galerie, zkusíme najít hlavní obrázek
-            if not image_urls:
-                product_images = driver.find_elements(By.CSS_SELECTOR, "div.itemBoxImages img, div.itemBoxImage img")
-                for img in product_images:
-                    img_url = img.get_attribute("src")
-                    if img_url and "upload/cnet" in img_url:
-                        if img_url.startswith("/"):
-                            img_url = f"https://en.fourcom.dk{img_url}"
-                        if img_url not in image_urls:
-                            image_urls.append(img_url)
-
+            gallery = driver.find_element(By.CSS_SELECTOR, "div.thumbs")
+            image_links = gallery.find_elements(By.CSS_SELECTOR, "a[data-fancybox='gallery']")
+            image_urls = [link.get_attribute("href") for link in image_links]
+            logger.debug(f"Primary method found {len(image_urls)} images")
         except Exception as e:
-            logger.error(f"Error getting images: {str(e)}")
-            try:
-                driver.save_screenshot("fourcom_images_error.png")
-            except:
-                pass
+            logger.debug(f"Primary image extraction failed: {str(e)}")
 
-        logger.debug(f"Found {len(image_urls)} images for product {PNumber}")
+        # 7. Získání obrázků - DRUHÁ METODA (alternativní)
+        if not image_urls:
+            logger.debug("Trying alternative image source from itemBoxImages")
+            try:
+                image_container = driver.find_element(By.CSS_SELECTOR, "div.itemBoxImages")
+                image_divs = image_container.find_elements(By.CSS_SELECTOR, "div[data-src]")
+                image_urls = [div.get_attribute("data-src") for div in image_divs]
+                logger.debug(f"Alternative method found {len(image_urls)} images")
+            except Exception as e:
+                logger.debug(f"Alternative image extraction failed: {str(e)}")
+
+        # 8. Získání obrázků - TŘETÍ METODA (nová struktura)
+        if not image_urls:
+            logger.debug("Trying fallback method for new product structure")
+            try:
+                product_container = driver.find_element(By.CSS_SELECTOR, "div.product-item")
+
+                # Získání hlavního obrázku
+                main_image = product_container.find_element(
+                    By.CSS_SELECTOR, "div.big-image a[data-fancybox='gallery']"
+                )
+                image_urls.append(main_image.get_attribute("href"))
+
+                # Získání dalších obrázků z galerie (pokud existují)
+                thumb_images = product_container.find_elements(
+                    By.CSS_SELECTOR, "div.thumbnails a[data-fancybox='gallery']"
+                )
+                image_urls.extend([img.get_attribute("href") for img in thumb_images])
+
+                logger.debug(f"Fallback method found {len(image_urls)} images")
+            except Exception as e:
+                logger.debug(f"Fallback image extraction failed: {str(e)}")
+
+        if image_urls:
+            logger.debug(f"Total images found: {len(image_urls)}")
+        else:
+            logger.debug("No images found with any method")
+
         return image_urls
 
     except Exception as e:
         logger.error(f"Error in fourcom_get_product_images: {str(e)}", exc_info=True)
+        try:
+            driver.save_screenshot("fourcom_debug.png")
+            logger.debug("Saved screenshot to fourcom_debug.png")
+            logger.debug(f"Current page source (first 2000 chars):\n{driver.page_source[:2000]}")
+        except:
+            pass
         return []
     finally:
         try:
@@ -325,9 +343,6 @@ async def komputronik_get_product_images(PNumber):
 if __name__ == "__main__":
     import asyncio
 
-    #Notebooksbilliger test
-    print(asyncio.run(notebooksbilliger_get_product_images("A1064333")))
-    #Komputronik test
+    #print(asyncio.run(notebooksbilliger_get_product_images("A1064333")))
     #print(asyncio.run(komputronik_get_product_images("MOD-PHA-047")))
-    #Fourcom test
-    #print(asyncio.run(fourcom_get_product_images("PB5W0001SE")))
+    print(asyncio.run(fourcom_get_product_images("440386")))

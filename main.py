@@ -35,7 +35,7 @@ DODAVATELE = {
     "Komputronik (selenium)": {"kod": "104584", "produkt_dotaz_kod": "SivCode", "funkce": komputronik_get_product_images, "paralelně": False},
 }
 
-POCTY_PRODUKTU = [25, 50]
+POCTY_PRODUKTU = [25, 50, 10]
 OBRAZKY_NA_RADEK = ["2", "3", "4", "5", "6", "nekonečno"]
 
 # Nová konstanta pro soubor s ignorovanými produkty
