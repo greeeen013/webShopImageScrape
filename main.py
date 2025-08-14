@@ -121,6 +121,8 @@ class ObrFormApp:
         load_dotenv()
         db_table = os.getenv('DB_TABLE')
 
+        self.featured_index = {}  # {kod_produktu: int | None} - index obrázku označeného jako #1
+        self.image_frames = {}  # {kod_produktu: [frame_pro_jednotlivé_obrázky]}
 
         # Konfigurace databáze
         self.table_name = db_table
@@ -309,25 +311,28 @@ class ObrFormApp:
 
     def reorganize_images(self, frame, urls, kod):
         """Přerozdělí obrázky v frame podle aktuálního nastavení počtu na řádek."""
-        # Odstranění všech obrázků z frame
+        # Odstranit staré widgety
         for widget in frame.winfo_children():
             widget.destroy()
 
-        # Vytvoření nových frame pro řádky
-        current_row = 0
+        # --- NOVÉ / UPRAVENÉ ---
+        # znovu sestavíme registry frame-ů pro daný produkt
+        self.image_frames[kod] = []
+
         current_col = 0
         row_frame = None
 
         for i, url in enumerate(urls):
-            if current_col % self.obrazky_na_radek == 0:
+            if current_col % (self.obrazky_na_radek if self.obrazky_na_radek != float('inf') else 999999) == 0:
                 row_frame = tk.Frame(frame)
                 row_frame.pack(fill=tk.X)
                 current_col = 0
 
-            # Vytvoření frame pro obrázek
-            img_frame = tk.Frame(row_frame)
+            # obal pro jeden obrázek
+            img_frame = tk.Frame(row_frame, bd=0, highlightthickness=0)
             img_frame.grid(row=0, column=current_col, padx=5, pady=5)
             current_col += 1
+            self.image_frames[kod].append(img_frame)
 
             # Checkbox
             img_var = self.image_check_vars[kod][i]
@@ -342,7 +347,22 @@ class ObrFormApp:
             label = tk.Label(img_frame, image=self.img_refs[kod][i])
             label.image = self.img_refs[kod][i]
             label.pack()
+
+            # Levý klik přepíná checkbox, pravý klik označí '1'
             label.bind("<Button-1>", lambda e, var=img_var: var.set(not var.get()))
+            label.bind("<Button-3>", lambda e, k=kod, idx=i: self.mark_featured(k, idx))
+
+            # --- NOVÉ / UPRAVENÉ ---
+            # Overlay "1" (bílé pozadí, černý text)
+            overlay = tk.Label(img_frame, text="1", bg="white", fg="black", font=("Arial", 14, "bold"))
+            overlay._is_overlay = True  # interní příznak pro snadné dohledání
+            # Zobrazíme jen u aktuálně označeného indexu
+            if self.featured_index.get(kod) == i:
+                overlay.place(x=5, y=5)
+                img_frame.configure(highlightbackground="black", highlightthickness=2)
+            else:
+                # Necháme připravené, ale skryté
+                overlay.place_forget()
 
     def _on_mousewheel(self, event):
         """Zpracování scrollování myší s akcelerací."""
@@ -435,8 +455,13 @@ class ObrFormApp:
                 SELECT TOP {self.buffer_size} 
                     [{produkt_dotaz_kod}] AS SivCode, 
                     SivName 
-                FROM [{self.table_name}] 
+                FROM [{self.table_name}]
+                join StoItem with(nolock) on (SivStiId = StiId)
+                left join SCategory with(nolock) on (StiScaId = ScaId)
                 WHERE [{self.column_mapping['supplier']}] = ?
+                and not exists (Select top 1 1 from Attach with(nolock) where AttSrcId = StiId and AttPedId = 52 and (AttTag like 'sys-gal%' or AttTag = 'sys-enl' or AttTag = 'sys-thu')) --neexistuje velký, náhledový ani galeriový
+                AND StiPLPict is null
+                AND ScaId not in (8843,8388,8553,8387,6263,8231,7575,5203,2830,269,1668,2391,1634,7209)
                 AND ([{self.column_mapping['notes']}] IS NULL OR [{self.column_mapping['notes']}] = '')
                 AND ([{self.column_mapping['pairing']}] IS NOT NULL AND [{self.column_mapping['pairing']}] <> '')
                 AND NOT EXISTS (
@@ -483,6 +508,32 @@ class ObrFormApp:
             self.root.after(0, self.loading_screen.close)
             self.root.after(0, self.hide_overlay)
             self.close_database()
+
+    def mark_featured(self, kod, index):
+        """Označí/vypne 'první' obrázek u produktu (pravý klik)."""
+        current = self.featured_index.get(kod)
+        # Toggle: klik na stejný index zruší výběr
+        if current == index:
+            self.featured_index[kod] = None
+        else:
+            self.featured_index[kod] = index
+
+        # Vizualizace: ukázat/skryt overlay '1' a zvýraznit rámeček
+        frames = self.image_frames.get(kod, [])
+        for i, f in enumerate(frames):
+            # hledej overlay label vytvořený v reorganize_images (má příznak _is_overlay = True)
+            overlay = None
+            for child in f.winfo_children():
+                if isinstance(child, tk.Label) and getattr(child, "_is_overlay", False):
+                    overlay = child
+                    break
+            if overlay:
+                if self.featured_index[kod] == i:
+                    overlay.place(x=5, y=5)  # zobrazíme placku "1" vlevo nahoře
+                    f.configure(highlightbackground="black", highlightthickness=2)
+                else:
+                    overlay.place_forget()
+                    f.configure(highlightthickness=0)
 
     def clear_gui(self):
         """Clear the GUI in the main thread"""
@@ -680,6 +731,11 @@ class ObrFormApp:
         """Přidá jeden načtený obrázek k produktu."""
         kod = produkt['SivCode']
 
+        if kod not in self.featured_index:
+            self.featured_index[kod] = None
+        if kod not in self.image_frames:
+            self.image_frames[kod] = []
+
         if kod not in self.produkt_widgety:
             return
 
@@ -750,6 +806,13 @@ class ObrFormApp:
                     url for i, url in enumerate(data['urls'])
                     if i < len(data['image_vars']) and data['image_vars'][i].get()
                 ]
+
+                # Pokud je u produktu zvolen "featured" a zároveň je mezi vybranými, dej ho na první místo
+                fi = self.featured_index.get(kod)
+                if fi is not None and 0 <= fi < len(data['urls']):
+                    featured_url = data['urls'][fi]
+                    if featured_url in vybrane_urls:
+                        vybrane_urls = [featured_url] + [u for u in vybrane_urls if u != featured_url]
 
                 if vybrane_urls:
                     produkt = data['produkt']
