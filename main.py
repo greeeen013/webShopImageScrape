@@ -10,6 +10,8 @@ import asyncio
 import json
 import os
 from dotenv import load_dotenv
+import hashlib
+import imagehash
 
 from ShopScraper import octo_get_product_images, directdeal_get_product_images, api_get_product_images, easynotebooks_get_product_images, kosatec_get_product_images, dcs_get_product_images, incomgroup_get_product_images, wortmann_get_product_images, wave_get_product_images
 from ShopSelenium import fourcom_get_product_images, notebooksbilliger_get_product_images, komputronik_get_product_images
@@ -40,6 +42,10 @@ OBRAZKY_NA_RADEK = ["2", "3", "4", "5", "6", "nekonečno"]
 
 # Nová konstanta pro soubor s ignorovanými produkty
 IGNORE_FILE = "ignoreSivCode.json"
+
+# Přidáno: Konstanty pro práci s obrázky
+IMG_DIR = "img"
+SIMILARITY_THRESHOLD = 5  # Pro imagehash (max rozdíl 64, menší hodnota = větší podobnost)
 
 
 class LoadingScreen:
@@ -105,7 +111,7 @@ class ObrFormApp:
         self.buffer_size = 25
         self.image_queue = queue.Queue()
         self.loading_threads = []
-        self.all_check_var = tk.BooleanVar(value=True) # zaškrtnutý checkbox pro "Vybrat vše"
+        self.all_check_var = tk.BooleanVar(value=True)  # zaškrtnutý checkbox pro "Vybrat vše"
         self.produkt_check_vars = {}
         self.image_check_vars = {}
         self.loading_active = False
@@ -114,6 +120,11 @@ class ObrFormApp:
         self.obrazky_na_radek = 6
         self.scrollregion_scheduled = False
         self.loading_screen = None
+
+        # Nové atributy pro správu obrázků
+        self.red_frame_images = set()  # {(kod, index)}
+        self.original_images = {}  # {kod: [binární data obrázků]}
+        self.existing_hashes = self.load_existing_image_hashes()  # Načte existující hashe obrázků
 
         # Načtení ignorovaných kódů při startu
         self.ignored_codes = self.load_ignored_codes()
@@ -136,6 +147,79 @@ class ObrFormApp:
 
         print("[DEBUG] Inicializace GUI...")
         self.setup_gui()
+
+    def load_existing_image_hashes(self):
+        """Načte hashe existujících obrázků v IMG_DIR"""
+        hashes = set()
+        if not os.path.exists(IMG_DIR):
+            return hashes
+
+        for root, _, files in os.walk(IMG_DIR):
+            for file in files:
+                if file.lower().endswith(('png', 'jpg', 'jpeg', 'gif', 'bmp')):
+                    path = os.path.join(root, file)
+                    try:
+                        with Image.open(path) as img:
+                            img_hash = imagehash.average_hash(img)
+                            hashes.add(str(img_hash))
+                    except Exception as e:
+                        print(f"Chyba při načítání obrázku {path}: {e}")
+        return hashes
+
+    def is_image_similar(self, image_data):
+        """Zjistí, zda je obrázek podobný nějakému existujícímu"""
+        try:
+            img = Image.open(io.BytesIO(image_data))
+            new_hash = imagehash.average_hash(img)
+
+            for existing_hash_str in self.existing_hashes:
+                existing_hash = imagehash.hex_to_hash(existing_hash_str)
+                if new_hash - existing_hash <= SIMILARITY_THRESHOLD:
+                    return True
+            return False
+        except Exception as e:
+            print(f"Chyba při porovnávání obrázků: {e}")
+            return False
+
+    def save_image_to_disk(self, image_data, supplier_code, siv_code, index):
+        """Uloží obrázek na disk a přidá jeho hash"""
+        try:
+            supplier_dir = os.path.join(IMG_DIR, supplier_code)
+            os.makedirs(supplier_dir, exist_ok=True)
+
+            # Vytvořit unikátní název souboru
+            file_hash = hashlib.md5(image_data).hexdigest()[:8]
+            filename = f"{siv_code}_{index}_{file_hash}.jpg"
+            path = os.path.join(supplier_dir, filename)
+
+            with open(path, 'wb') as f:
+                f.write(image_data)
+
+            # Přidat hash do existujících
+            img = Image.open(io.BytesIO(image_data))
+            img_hash = imagehash.average_hash(img)
+            self.existing_hashes.add(str(img_hash))
+            return True
+        except Exception as e:
+            print(f"Chyba při ukládání obrázku: {e}")
+            return False
+
+    def mark_with_red_frame(self, kod, index):
+        """Označí obrázek červeným rámečkem a odškrtne checkbox"""
+        key = (kod, index)
+
+        # Přepnout stav označení
+        if key in self.red_frame_images:
+            self.red_frame_images.remove(key)
+            frame = self.image_frames[kod][index]
+            frame.configure(highlightthickness=0)
+        else:
+            self.red_frame_images.add(key)
+            frame = self.image_frames[kod][index]
+            frame.configure(highlightbackground="red", highlightthickness=2)
+
+            # Odškrtnout obrázek
+            self.image_check_vars[kod][index].set(False)
 
     def load_ignored_codes(self):
         """Načte ignorované kódy z JSON souboru"""
@@ -315,8 +399,7 @@ class ObrFormApp:
         for widget in frame.winfo_children():
             widget.destroy()
 
-        # --- NOVÉ / UPRAVENÉ ---
-        # znovu sestavíme registry frame-ů pro daný produkt
+        # Znovu sestavíme registry frame-ů pro daný produkt
         self.image_frames[kod] = []
 
         current_col = 0
@@ -328,11 +411,15 @@ class ObrFormApp:
                 row_frame.pack(fill=tk.X)
                 current_col = 0
 
-            # obal pro jeden obrázek
+            # Frame pro jeden obrázek
             img_frame = tk.Frame(row_frame, bd=0, highlightthickness=0)
             img_frame.grid(row=0, column=current_col, padx=5, pady=5)
             current_col += 1
             self.image_frames[kod].append(img_frame)
+
+            # Nastavení červeného rámečku pokud je obrázek označen
+            if (kod, i) in self.red_frame_images:
+                img_frame.configure(highlightbackground="red", highlightthickness=2)
 
             # Checkbox
             img_var = self.image_check_vars[kod][i]
@@ -348,20 +435,18 @@ class ObrFormApp:
             label.image = self.img_refs[kod][i]
             label.pack()
 
-            # Levý klik přepíná checkbox, pravý klik označí '1'
+            # Bind událostí
             label.bind("<Button-1>", lambda e, var=img_var: var.set(not var.get()))
+            label.bind("<Button-2>", lambda e, k=kod, idx=i: self.mark_with_red_frame(k, idx))
             label.bind("<Button-3>", lambda e, k=kod, idx=i: self.mark_featured(k, idx))
 
-            # --- NOVÉ / UPRAVENÉ ---
-            # Overlay "1" (bílé pozadí, černý text)
+            # Overlay "1" pro featured obrázek
             overlay = tk.Label(img_frame, text="1", bg="white", fg="black", font=("Arial", 14, "bold"))
-            overlay._is_overlay = True  # interní příznak pro snadné dohledání
-            # Zobrazíme jen u aktuálně označeného indexu
+            overlay._is_overlay = True
             if self.featured_index.get(kod) == i:
                 overlay.place(x=5, y=5)
                 img_frame.configure(highlightbackground="black", highlightthickness=2)
             else:
-                # Necháme připravené, ale skryté
                 overlay.place_forget()
 
     def _on_mousewheel(self, event):
@@ -537,8 +622,25 @@ class ObrFormApp:
 
     def clear_gui(self):
         """Clear the GUI in the main thread"""
+        # Vyčistit původní obrázky
+        self.original_images = {}
+        self.red_frame_images.clear()
+
+        # Odstranit všechny widgety z inner_frame
         for widget in self.inner_frame.winfo_children():
             widget.destroy()
+
+        # Resetovat stav
+        self.produkt_widgety = {}
+        self.produkt_check_vars = {}
+        self.image_check_vars = {}
+        self.img_refs = {}
+        self.featured_index = {}
+        self.image_frames = {}
+        self.all_check_var.set(False)
+
+        # Aktualizovat GUI
+        self.canvas.update_idletasks()
 
     def start_async_image_loading(self):
         """Spustí asynchronní načítání obrázků s optimalizovaným počtem vláken."""
@@ -618,57 +720,77 @@ class ObrFormApp:
             kod = produkt['SivCode']
             print(f"[THREAD] Načítám obrázky pro produkt: {kod}")
 
-            # ZÍSKÁNÍ FUNKCE PRO VYBRANÉHO DODAVATELE
-            funkce_pro_dodavatele = self.vybrana_funkce
+            # Inicializovat úložiště pro originální obrázky
+            if kod not in self.original_images:
+                self.original_images[kod] = []
 
+            # Získání URL obrázků
+            funkce_pro_dodavatele = self.vybrana_funkce
             if not funkce_pro_dodavatele:
                 print(f"[CHYBA] Pro dodavatele {self.vybrany_dodavatel_kod} není definována funkce")
                 return
 
-            # Získání URL obrázků pomocí funkce pro daného dodavatele
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             urls = loop.run_until_complete(funkce_pro_dodavatele(kod))
             loop.close()
 
-            # Pokud nejsou žádné obrázky, přidáme do ignore listu
             if not urls:
                 print(f"[INFO] Žádné obrázky pro produkt {kod}, přidávám do ignorovaných")
                 self.add_ignored_code(self.vybrany_dodavatel_kod, kod)
                 return
 
-            # Zobraz produkt pouze pokud má obrázky
-            self.root.after(0, lambda: self.display_product_with_images(produkt))
+            # Seznam pro platné obrázky (které nejsou podobné existujícím)
+            valid_urls = []
+            valid_images = []
 
-            # Načti a zobraz obrázky
             for url in urls:
                 try:
                     headers = {
                         "User-Agent": "Mozilla/5.0",
                         "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-                        "Referer": "https://www.incomgroup.pl/"  # aspoň doména; ideálně skutečný produktový URL
+                        "Referer": "https://www.incomgroup.pl/"
                     }
                     r = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
 
-                    # Zkontroluj, zda odpověď obsahuje obrázek
                     if 'image' not in r.headers.get('Content-Type', '').lower():
-                        print(f"[INFO] Přeskočeno (není obrázek): {url}")
+                        print(f"[INFO] Přeskočeno (není obrázek) KOD: {kod}, URL: {url}")
                         continue
 
-                    try:
-                        img = Image.open(io.BytesIO(r.content))
-                        img.verify()  # Ověří validitu obrázku
-                        img = Image.open(io.BytesIO(r.content))  # Nutno znovu otevřít po verify
-                        img.thumbnail((300, 300))
-                        photo = ImageTk.PhotoImage(img)
-                    except Exception as e:
-                        print(f"[INFO] Chyba při zpracování obrázku {url}: {e}")
+                    # Uložit originální data obrázku
+                    image_data = r.content
+                    self.original_images[kod].append(image_data)
+
+                    # Kontrola podobnosti s existujícími obrázky
+                    if self.is_image_similar(image_data):
+                        print(f"[INFO] Přeskočeno (podobný obrázek): {url}")
                         continue
 
-                    # Přidej obrázek do GUI
-                    self.root.after_idle(self.add_single_image, produkt, url, photo)
+                    valid_urls.append(url)
+                    valid_images.append(image_data)
+
                 except Exception as e:
                     print(f"[CHYBA] Obrázek {url} nelze načíst: {e}")
+
+            # Pokud nezbyl žádný platný obrázek, přeskočit celý produkt
+            if not valid_urls:
+                print(f"[INFO] Všechny obrázky pro produkt {kod} byly přeskočeny (podobnost)")
+                self.add_ignored_code(self.vybrany_dodavatel_kod, kod)
+                return
+
+            # Zobrazit produkt pouze pokud má platné obrázky
+            self.root.after(0, lambda: self.display_product_with_images(produkt))
+
+            for url, image_data in zip(valid_urls, valid_images):
+                try:
+                    img = Image.open(io.BytesIO(image_data))
+                    img.verify()
+                    img = Image.open(io.BytesIO(image_data))
+                    img.thumbnail((300, 300))
+                    photo = ImageTk.PhotoImage(img)
+                    self.root.after_idle(self.add_single_image, produkt, url, photo)
+                except Exception as e:
+                    print(f"[INFO] Chyba při zpracování obrázku {url}: {e}")
 
         except Exception as e:
             print(f"[CHYBA] Při načítání obrázků: {e}")
@@ -826,9 +948,21 @@ class ObrFormApp:
                     self.cursor.execute(query, (zapis, produkt['SivCode']))
                     products_to_remove.append(kod)
                 else:
-                    # ZMĚNA: Pokud nebyly vybrány žádné obrázky, přidat do ignorovaných
+                    # Pokud nebyly vybrány žádné obrázky, přidat do ignorovaných
                     self.add_ignored_code(self.vybrany_dodavatel_kod, kod)
                     products_to_remove.append(kod)
+
+            # Uložení červeně označených obrázků
+            for (kod, index) in self.red_frame_images:
+                if (kod in self.original_images and
+                        index < len(self.original_images[kod])):
+                    image_data = self.original_images[kod][index]
+                    self.save_image_to_disk(
+                        image_data,
+                        self.vybrany_dodavatel_kod,
+                        kod,
+                        index
+                    )
 
             self.conn.commit()
             messagebox.showinfo("Info", "Všechny vybrané produkty byly uloženy.")
@@ -846,6 +980,7 @@ class ObrFormApp:
             messagebox.showerror("Chyba", f"Chyba při ukládání:\n{e}")
         finally:
             self.close_database()
+            self.red_frame_images.clear()  # Vyčistit seznam označených obrázků
 
             # Automaticky načíst další produkty
             if self.vybrany_dodavatel and self.vybrany_dodavatel_kod:
