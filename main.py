@@ -1,4 +1,5 @@
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk, messagebox
 import requests
 from PIL import Image, ImageTk
@@ -39,7 +40,7 @@ DODAVATELE = {
     "Komputronik (selenium)": {"kod": "104584", "produkt_dotaz_kod": "SivCode", "funkce": komputronik_get_product_images, "paralelně": False},
 }
 
-POCTY_PRODUKTU = [25, 50, 10]
+POCTY_PRODUKTU = [25, 50, 75, 100, 10]
 OBRAZKY_NA_RADEK = ["2", "3", "4", "5", "6", "nekonečno"]
 
 # Nová konstanta pro soubor s ignorovanými produkty
@@ -328,6 +329,7 @@ class ObrFormApp:
         tk.Label(top_frame, text="Počet produktů:", font=("Arial", 12)).pack(side=tk.LEFT, padx=(20, 5))
         self.combo_pocet = ttk.Combobox(top_frame, values=POCTY_PRODUKTU, state="readonly", font=("Arial", 12),
                                         width=10)
+        self.combo_pocet.bind("<<ComboboxSelected>>", self.update_buffer_size)
         self.combo_pocet.current(0)
         self.combo_pocet.pack(side=tk.LEFT, padx=5)
 
@@ -379,6 +381,14 @@ class ObrFormApp:
         if not self.scrollregion_scheduled:
             self.scrollregion_scheduled = True
             self.root.after(100, self.update_scrollregion)
+
+    def update_buffer_size(self, event=None):
+        """Aktualizuje buffer_size podle hodnoty v comboboxu Počet produktů."""
+        try:
+            self.buffer_size = int(self.combo_pocet.get())
+        except Exception:
+            self.buffer_size = 25
+        print(f"[DEBUG] buffer_size -> {self.buffer_size}")
 
     def update_scrollregion(self):
         """Aktualizuje scrollregion canvasu s kontrolou existence."""
@@ -718,6 +728,7 @@ class ObrFormApp:
         self.combo_pocet.config(state='readonly')
         self.combo_obrazky_na_radek.config(state='readonly')
         self.chk_all.config(state='normal')
+        self.chk_all.select()  # Select all by default
 
     def load_product_images(self, produkt):
         """Načte obrázky pro produkt ve vlákně."""
@@ -922,7 +933,8 @@ class ObrFormApp:
             self.produkt_check_vars[kod].set(False)
 
     def potvrdit_vse(self):
-        """Potvrdí všechny vybrané produkty, uloží je do DB a připíše log do Excelu."""
+        """Potvrdí všechny vybrané produkty, uloží je do DB a připíše log do Excelu.
+           Po uložení provede normalizaci vzorců přes Excel COM (bez zálohy/kopie)."""
         if not self.connect_to_database():
             return
 
@@ -1031,6 +1043,70 @@ class ObrFormApp:
             self.conn.commit()
             wb.save(excel_path)
 
+            # === Post-processing: normalizace přes Excel COM (bez kopie) ===
+            com_result = {"status": "skipped", "reason": "missing_pywin32_or_excel"}
+            try:
+                try:
+                    import win32com.client as win32  # pywin32
+                except ImportError:
+                    win32 = None
+
+                if win32 is not None:
+                    XL_CELL_TYPE_FORMULAS = -4123  # xlCellTypeFormulas
+                    excel = win32.Dispatch("Excel.Application")
+                    excel.Visible = False
+                    excel.DisplayAlerts = False
+                    excel.AskToUpdateLinks = False
+                    excel.EnableEvents = False
+
+                    wb_com = excel.Workbooks.Open(str(Path(excel_path).resolve()))
+                    fixed = normalized = touched = skipped = 0
+                    try:
+                        for ws_com in wb_com.Worksheets:
+                            try:
+                                f_cells = ws_com.UsedRange.SpecialCells(XL_CELL_TYPE_FORMULAS)
+                            except Exception:
+                                continue
+                            for cell in f_cells:
+                                try:
+                                    fl = cell.FormulaLocal
+                                    if isinstance(fl, str) and fl.startswith("=@"):
+                                        cell.Formula2Local = "=" + fl[2:]  # explicitní '@' pryč
+                                        fixed += 1
+                                    else:
+                                        try:
+                                            cell.Formula2Local = cell.Formula2Local  # normalizace
+                                            normalized += 1
+                                        except Exception:
+                                            skipped += 1
+                                    touched += 1
+                                except Exception:
+                                    skipped += 1
+                                    continue
+                        wb_com.Save()
+                        com_result = {"status": "ok", "fixed": fixed, "normalized": normalized,
+                                      "touched": touched, "skipped": skipped}
+                    finally:
+                        wb_com.Close(SaveChanges=False)
+                        excel.Quit()
+            except Exception as e:
+                # COM selhal z jiného důvodu – necháme fallback
+                com_result = {"status": "error", "error": str(e)}
+
+            print(f"[INFO] Excel COM normalization: {com_result}")
+
+            # Fallback: když COM nebyl k dispozici/selhal – pokus o prosté odstranění '@' a případná instrukce
+            if com_result.get("status") != "ok":
+                try:
+                    fixed = self.strip_at_from_formulas(excel_path)
+                    print(f"[INFO] Fallback openpyxl: opraveno {fixed} buněk '=@'.")
+                    if fixed == 0:
+                        self.write_repair_instructions(excel_path)
+                except Exception as e:
+                    print(f"[WARN] Fallback openpyxl selhal: {e}")
+                    self.write_repair_instructions(excel_path)
+            # === konec post-processingu ===
+
             messagebox.showinfo("Info", "Všechny vybrané produkty byly uloženy.")
 
             # Odstranění uložených produktů z GUI
@@ -1078,6 +1154,33 @@ class ObrFormApp:
 
     # --- Excel helpery ---
 
+    def strip_at_from_formulas(self, path) -> int:
+        """Odstraní úvodní '@' z každého vzorce ve všech listech. Vrátí počet oprav."""
+        wb = load_workbook(path)
+        fixed = 0
+        for ws in wb.worksheets:
+            for row in ws.iter_rows(values_only=False):
+                for cell in row:
+                    val = cell.value
+                    if isinstance(val, str) and val.startswith("=@"):
+                        cell.value = "=" + val[2:]
+                        fixed += 1
+        wb.save(path)
+        return fixed
+
+    def write_repair_instructions(self, path):
+        """Zapíše do C2:D5 stručné instrukce k ruční opravě (Ctrl+H)."""
+        wb = load_workbook(path)
+        ws = wb.active
+        ws["C2"] = "Instrukce k opravě:"
+        ws["D2"] = "Zmáčknout Ctrl+H"
+        ws["C3"] = "Najít:"
+        ws["D3"] = "=@"
+        ws["C4"] = "Nahradit:"
+        ws["D4"] = "="
+        ws["C5"] = "Nahradit vše"
+        wb.save(path)
+
     def px_to_excel_col_width(self, pixels: int) -> float:
         # Excel šířka ~ (px - 5) / 7
         return max(0.0, (pixels - 5) / 7.0)
@@ -1085,69 +1188,6 @@ class ObrFormApp:
     def px_to_points(self, pixels: int) -> float:
         # 96 DPI -> 1 px = 0.75 pt
         return pixels * 0.75
-
-    def _ensure_excel_initialized(self):
-        """Zajistí existenci souboru, listu a hlaviček + formátování."""
-        excel_path = getattr(self, "EXCEL_LOG_PATH", "obrazky_log.xlsx")
-        try:
-            wb = load_workbook(excel_path)
-            ws = wb.active
-        except Exception:
-            wb = Workbook()
-            ws = wb.active
-
-        ws.title = "Log"
-
-        # Nastav hlavičky pouze pokud ještě nejsou
-        if ws.max_row < 1 or ws["A1"].value is None or ws["B1"].value is None:
-            ws["A1"].value = "ZAPSAL"
-            ws["B1"].value = "NEPOTVRDIL"
-
-            green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-            red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-            bold_font = Font(bold=True)
-
-            for cell in ("A1",):
-                ws[cell].fill = green_fill
-                ws[cell].font = bold_font
-                ws[cell].alignment = Alignment(horizontal="center", vertical="center")
-
-            for cell in ("B1",):
-                ws[cell].fill = red_fill
-                ws[cell].font = bold_font
-                ws[cell].alignment = Alignment(horizontal="center", vertical="center")
-
-        # Šířky sloupců ~ 180 px
-        target_width_chars = self.px_to_excel_col_width(180)
-        ws.column_dimensions["A"].width = target_width_chars
-        ws.column_dimensions["B"].width = target_width_chars
-
-        wb.save(excel_path)
-
-    def _append_excel_rows(self, confirmed_urls, unconfirmed_urls):
-        """Připíše řádky s OBRÁZEK() do sloupce A (zapsal) a B (nepotvrdil)."""
-        self._ensure_excel_initialized()
-
-        excel_path = getattr(self, "EXCEL_LOG_PATH", "obrazky_log.xlsx")
-        wb = load_workbook(excel_path)
-        ws = wb.active
-
-        # Začneme psát VŽDY až za poslední existující řádek
-        next_row = ws.max_row + 1
-
-        # Všechny potvrzené do sloupce A (B necháme prázdný)
-        for url in confirmed_urls:
-            ws.cell(row=next_row, column=1).value = f'=OBRÁZEK("{url}","zapsal",1)'
-            ws.row_dimensions[next_row].height = self.px_to_points(100)  # výška ~100 px
-            next_row += 1
-
-        # Všechny nepotvrzené do sloupce B (A necháme prázdný)
-        for url in unconfirmed_urls:
-            ws.cell(row=next_row, column=2).value = f'=OBRÁZEK("{url}","nepotvrdil",1)'
-            ws.row_dimensions[next_row].height = self.px_to_points(100)
-            next_row += 1
-
-        wb.save(excel_path)
 
 
 if __name__ == "__main__":
