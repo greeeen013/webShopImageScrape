@@ -13,11 +13,13 @@ from dotenv import load_dotenv
 import hashlib
 import imagehash
 
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import PatternFill, Font, Alignment
+from openpyxl.utils import get_column_letter
+
+
 from ShopScraper import octo_get_product_images, directdeal_get_product_images, api_get_product_images, easynotebooks_get_product_images, kosatec_get_product_images, dcs_get_product_images, incomgroup_get_product_images, wortmann_get_product_images, wave_get_product_images
 from ShopSelenium import fourcom_get_product_images, notebooksbilliger_get_product_images, komputronik_get_product_images
-
-
-# ... (původní kód)
 
 DODAVATELE = {
     # klasickej scrape
@@ -42,6 +44,9 @@ OBRAZKY_NA_RADEK = ["2", "3", "4", "5", "6", "nekonečno"]
 
 # Nová konstanta pro soubor s ignorovanými produkty
 IGNORE_FILE = "ignoreSivCode.json"
+
+# Nové konstanty pro práci s logování obrázků
+EXCEL_LOG_PATH = "obrazky_log.xlsx"
 
 # Přidáno: Konstanty pro práci s obrázky
 IMG_DIR = "img"
@@ -917,45 +922,103 @@ class ObrFormApp:
             self.produkt_check_vars[kod].set(False)
 
     def potvrdit_vse(self):
-        """Potvrdí všechny vybrané produkty a uloží je do databáze."""
+        """Potvrdí všechny vybrané produkty, uloží je do DB a připíše log do Excelu."""
         if not self.connect_to_database():
             return
+
+        excel_path = getattr(self, "EXCEL_LOG_PATH", "obrazky_log.xlsx")
+
+        # Otevři / vytvoř sešit + list
+        try:
+            wb = load_workbook(excel_path)
+            ws = wb.active
+        except Exception:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Log"
+
+        # Hlavičky a formát jen pokud chybí
+        if ws.max_row < 1 or ws["A1"].value is None or ws["B1"].value is None:
+            ws["A1"].value = "ZAPSAL"
+            ws["B1"].value = "NEPOTVRDIL"
+
+            green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+            red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+            bold_font = Font(bold=True)
+
+            for cell in ("A1",):
+                ws[cell].fill = green_fill
+                ws[cell].font = bold_font
+                ws[cell].alignment = Alignment(horizontal="center", vertical="center")
+
+            for cell in ("B1",):
+                ws[cell].fill = red_fill
+                ws[cell].font = bold_font
+                ws[cell].alignment = Alignment(horizontal="center", vertical="center")
+
+        # Šířky sloupců na ~180 px (přepočet pomocí helperu)
+        target_width_chars = self.px_to_excel_col_width(180)
+        ws.column_dimensions["A"].width = target_width_chars
+        ws.column_dimensions["B"].width = target_width_chars
 
         products_to_remove = []
         try:
             for kod, data in self.produkt_widgety.items():
+                # Vybrané obrázky (checkboxy)
                 vybrane_urls = [
-                    url for i, url in enumerate(data['urls'])
-                    if i < len(data['image_vars']) and data['image_vars'][i].get()
+                    url for i, url in enumerate(data["urls"])
+                    if i < len(data["image_vars"]) and data["image_vars"][i].get()
                 ]
 
-                # Pokud je u produktu zvolen "featured" a zároveň je mezi vybranými, dej ho na první místo
+                # Featured dopředu, pokud je vybraný
                 fi = self.featured_index.get(kod)
-                if fi is not None and 0 <= fi < len(data['urls']):
-                    featured_url = data['urls'][fi]
+                if fi is not None and 0 <= fi < len(data["urls"]):
+                    featured_url = data["urls"][fi]
                     if featured_url in vybrane_urls:
                         vybrane_urls = [featured_url] + [u for u in vybrane_urls if u != featured_url]
 
+                # Nevybrané (pro Excel do sloupce B)
+                nevybrane_urls = [
+                    url for i, url in enumerate(data["urls"])
+                    if not (i < len(data["image_vars"]) and data["image_vars"][i].get())
+                ]
+
+                # --- Excel: připisování řádků s OBRÁZEK() ---
+                next_row = ws.max_row + 1
+
+                # ZAPSAL -> sloupec A
+                for url in vybrane_urls:
+                    ws.cell(row=next_row, column=1).value = f'=OBRÁZEK("{url}","zapsal",1)'
+                    ws.row_dimensions[next_row].height = self.px_to_points(100)  # 100 px na řádek
+                    next_row += 1
+
+                # NEPOTVRDIL -> sloupec B
+                for url in nevybrane_urls:
+                    ws.cell(row=next_row, column=2).value = f'=OBRÁZEK("{url}","nepotvrdil",1)'
+                    ws.row_dimensions[next_row].height = self.px_to_points(100)
+                    next_row += 1
+                # --- konec Excel logu pro daný produkt ---
+
+                # --- Uložení do DB (jen když je něco vybrané) ---
                 if vybrane_urls:
-                    produkt = data['produkt']
+                    produkt = data["produkt"]
                     zapis = ";\n".join(vybrane_urls) + ";"
 
                     query = f"""
-                        UPDATE [{self.table_name}] 
-                        SET [{self.column_mapping['notes']}] = ? 
+                        UPDATE [{self.table_name}]
+                        SET [{self.column_mapping['notes']}] = ?
                         WHERE [{self.column_mapping['code']}] = ?
                     """
-                    self.cursor.execute(query, (zapis, produkt['SivCode']))
+                    self.cursor.execute(query, (zapis, produkt["SivCode"]))
                     products_to_remove.append(kod)
                 else:
                     # Pokud nebyly vybrány žádné obrázky, přidat do ignorovaných
                     self.add_ignored_code(self.vybrany_dodavatel_kod, kod)
                     products_to_remove.append(kod)
 
-            # Uložení červeně označených obrázků
+            # Uložení červeně označených obrázků na disk
             for (kod, index) in self.red_frame_images:
-                if (kod in self.original_images and
-                        index < len(self.original_images[kod])):
+                if (kod in self.original_images and index < len(self.original_images[kod])):
                     image_data = self.original_images[kod][index]
                     self.save_image_to_disk(
                         image_data,
@@ -964,23 +1027,26 @@ class ObrFormApp:
                         index
                     )
 
+            # Commit DB i uložení Excelu
             self.conn.commit()
+            wb.save(excel_path)
+
             messagebox.showinfo("Info", "Všechny vybrané produkty byly uloženy.")
 
             # Odstranění uložených produktů z GUI
             for kod in products_to_remove:
                 if kod in self.produkt_widgety:
-                    self.produkt_widgety[kod]['frame'].destroy()
+                    self.produkt_widgety[kod]["frame"].destroy()
                     del self.produkt_widgety[kod]
                 if kod in self.img_refs:
                     del self.img_refs[kod]
 
         except Exception as e:
-            print(f"[CHYBA] Při ukládání do DB: {e}")
+            print(f"[CHYBA] Při ukládání do DB/Excelu: {e}")
             messagebox.showerror("Chyba", f"Chyba při ukládání:\n{e}")
         finally:
             self.close_database()
-            self.red_frame_images.clear()  # Vyčistit seznam označených obrázků
+            self.red_frame_images.clear()
 
             # Automaticky načíst další produkty
             if self.vybrany_dodavatel and self.vybrany_dodavatel_kod:
@@ -1009,6 +1075,79 @@ class ObrFormApp:
             finally:
                 self.conn = None
                 self.cursor = None
+
+    # --- Excel helpery ---
+
+    def px_to_excel_col_width(self, pixels: int) -> float:
+        # Excel šířka ~ (px - 5) / 7
+        return max(0.0, (pixels - 5) / 7.0)
+
+    def px_to_points(self, pixels: int) -> float:
+        # 96 DPI -> 1 px = 0.75 pt
+        return pixels * 0.75
+
+    def _ensure_excel_initialized(self):
+        """Zajistí existenci souboru, listu a hlaviček + formátování."""
+        excel_path = getattr(self, "EXCEL_LOG_PATH", "obrazky_log.xlsx")
+        try:
+            wb = load_workbook(excel_path)
+            ws = wb.active
+        except Exception:
+            wb = Workbook()
+            ws = wb.active
+
+        ws.title = "Log"
+
+        # Nastav hlavičky pouze pokud ještě nejsou
+        if ws.max_row < 1 or ws["A1"].value is None or ws["B1"].value is None:
+            ws["A1"].value = "ZAPSAL"
+            ws["B1"].value = "NEPOTVRDIL"
+
+            green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+            red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+            bold_font = Font(bold=True)
+
+            for cell in ("A1",):
+                ws[cell].fill = green_fill
+                ws[cell].font = bold_font
+                ws[cell].alignment = Alignment(horizontal="center", vertical="center")
+
+            for cell in ("B1",):
+                ws[cell].fill = red_fill
+                ws[cell].font = bold_font
+                ws[cell].alignment = Alignment(horizontal="center", vertical="center")
+
+        # Šířky sloupců ~ 180 px
+        target_width_chars = self.px_to_excel_col_width(180)
+        ws.column_dimensions["A"].width = target_width_chars
+        ws.column_dimensions["B"].width = target_width_chars
+
+        wb.save(excel_path)
+
+    def _append_excel_rows(self, confirmed_urls, unconfirmed_urls):
+        """Připíše řádky s OBRÁZEK() do sloupce A (zapsal) a B (nepotvrdil)."""
+        self._ensure_excel_initialized()
+
+        excel_path = getattr(self, "EXCEL_LOG_PATH", "obrazky_log.xlsx")
+        wb = load_workbook(excel_path)
+        ws = wb.active
+
+        # Začneme psát VŽDY až za poslední existující řádek
+        next_row = ws.max_row + 1
+
+        # Všechny potvrzené do sloupce A (B necháme prázdný)
+        for url in confirmed_urls:
+            ws.cell(row=next_row, column=1).value = f'=OBRÁZEK("{url}","zapsal",1)'
+            ws.row_dimensions[next_row].height = self.px_to_points(100)  # výška ~100 px
+            next_row += 1
+
+        # Všechny nepotvrzené do sloupce B (A necháme prázdný)
+        for url in unconfirmed_urls:
+            ws.cell(row=next_row, column=2).value = f'=OBRÁZEK("{url}","nepotvrdil",1)'
+            ws.row_dimensions[next_row].height = self.px_to_points(100)
+            next_row += 1
+
+        wb.save(excel_path)
 
 
 if __name__ == "__main__":
