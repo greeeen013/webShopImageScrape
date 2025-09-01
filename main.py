@@ -40,7 +40,17 @@ DODAVATELE = {
     "Komputronik (selenium)": {"kod": "104584", "produkt_dotaz_kod": "SivCode", "funkce": komputronik_get_product_images, "paralelně": False},
 }
 
-POCTY_PRODUKTU = [25, 50, 75, 100, 10]
+# Slovní volby počtu produktů pro combobox
+POCTY_PRODUKTU = ["hodně málo", "málo", "středně", "hodně", "nejvíc"]
+
+# Mapování slov -> čísel, se kterými pracuje logika (TOP ...)
+POCET_MAP = {
+    "hodně málo": 15,
+    "málo": 25,
+    "středně": 50,
+    "hodně": 100,
+    "nejvíc": 150,
+}
 OBRAZKY_NA_RADEK = ["2", "3", "4", "5", "6", "nekonečno"]
 
 # Nová konstanta pro soubor s ignorovanými produkty
@@ -327,11 +337,18 @@ class ObrFormApp:
 
         # Combobox pro výběr počtu produktů
         tk.Label(top_frame, text="Počet produktů:", font=("Arial", 12)).pack(side=tk.LEFT, padx=(20, 5))
-        self.combo_pocet = ttk.Combobox(top_frame, values=POCTY_PRODUKTU, state="readonly", font=("Arial", 12),
-                                        width=10)
+        self.combo_pocet = ttk.Combobox(
+            top_frame,
+            values=POCTY_PRODUKTU,
+            state="readonly",
+            font=("Arial", 12),
+            width=12  # delší texty se lépe vejdou
+        )
         self.combo_pocet.bind("<<ComboboxSelected>>", self.update_buffer_size)
-        self.combo_pocet.current(0)
+        self.combo_pocet.current(2)  # default: "středně"
         self.combo_pocet.pack(side=tk.LEFT, padx=5)
+        # hned nastaví buffer_size podle defaultu
+        self.update_buffer_size()
 
         # Combobox pro výběr počtu obrázků na řádek
         tk.Label(top_frame, text="Obrázky na řádek:", font=("Arial", 12)).pack(side=tk.LEFT, padx=(20, 5))
@@ -383,12 +400,14 @@ class ObrFormApp:
             self.root.after(100, self.update_scrollregion)
 
     def update_buffer_size(self, event=None):
-        """Aktualizuje buffer_size podle hodnoty v comboboxu Počet produktů."""
+        """Aktualizuje buffer_size podle slovní volby v comboboxu Počet produktů."""
         try:
-            self.buffer_size = int(self.combo_pocet.get())
+            volba = str(self.combo_pocet.get()).strip()
+            # POCET_MAP je globální konstanta z horní části souboru
+            self.buffer_size = POCET_MAP.get(volba, 50)  # fallback na 'středně' = 50
         except Exception:
-            self.buffer_size = 25
-        print(f"[DEBUG] buffer_size -> {self.buffer_size}")
+            self.buffer_size = 50
+        print(f"[DEBUG] buffer_size -> {self.buffer_size} (volba: {self.combo_pocet.get()})")
 
     def update_scrollregion(self):
         """Aktualizuje scrollregion canvasu s kontrolou existence."""
