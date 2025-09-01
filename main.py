@@ -470,14 +470,14 @@ class ObrFormApp:
         self.canvas.yview_scroll(scroll_amount, "units")
 
     def combo_selected(self, event):
-        """Zpracuje výběr dodavatele a počtu produktů."""
+        """Zpracuje výběr dodavatele a počtu produktů (při každém reloadu vyjet nahoru)."""
         self.vybrany_dodavatel = self.combo_dodavatel.get()
         info = DODAVATELE[self.vybrany_dodavatel]
         self.vybrany_dodavatel_kod = info["kod"]
         self.vybrana_funkce = info["funkce"]
 
         print(
-            f"[DEBUG] Vybrán dodavatel: {self.vybrany_dodavatel}, kód: {self.vybrany_dodavatel_kod}, počet: {self.buffer_size}")
+            f"[DEBUG] Vybrán dodavatel: {self.vybrany_dodavatel}..., kód: {self.vybrany_dodavatel_kod}, počet: {self.buffer_size}")
 
         # Zobrazit černou překryvnou obrazovku
         self.show_overlay()
@@ -485,6 +485,12 @@ class ObrFormApp:
         # Vytvořit loading screen (bude nad černou obrazovkou)
         self.loading_screen = LoadingScreen(self.root)
         self.root.update()  # Force update to show loading screen immediately
+
+        # <<< přidej: okamžitě vyjet nahoru, aby nová várka začínala vždy "odshora"
+        try:
+            self.canvas.yview_moveto(0.0)
+        except Exception as e:
+            print(f"[WARN] combo_selected: scroll nahoru selhal: {e}")
 
         # Zakázat UI prvky během načítání
         self.combo_dodavatel.config(state='disabled')
@@ -655,7 +661,7 @@ class ObrFormApp:
                     f.configure(highlightthickness=0)
 
     def clear_gui(self):
-        """Clear the GUI in the main thread"""
+        """Clear the GUI in the main thread + posunout scroll nahoru."""
         # Vyčistit původní obrázky
         self.original_images = {}
         self.red_frame_images.clear()
@@ -673,8 +679,19 @@ class ObrFormApp:
         self.image_frames = {}
         self.all_check_var.set(False)
 
-        # Aktualizovat GUI
-        self.canvas.update_idletasks()
+        # Aktualizovat GUI a VŽDY srolovat nahoru
+        try:
+            # nejdřív refresh, pak skok na začátek
+            self.canvas.update_idletasks()
+            self.canvas.yview_moveto(0.0)  # <<<<<< klíčová řádka
+        except Exception as e:
+            print(f"[WARN] clear_gui: scroll nahoru se nepodařil: {e}")
+
+        # pro jistotu ještě přepočítat scrollregion (nebude vadit ani když je prázdný)
+        try:
+            self.schedule_scrollregion_update()
+        except Exception:
+            pass
 
     def start_async_image_loading(self):
         """Spustí asynchronní načítání obrázků s optimalizovaným počtem vláken."""
