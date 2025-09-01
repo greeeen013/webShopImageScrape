@@ -517,9 +517,10 @@ class ObrFormApp:
             self.overlay = None
 
     def load_products_thread(self):
-        """Thread for loading products to keep UI responsive"""
+        """Thread for loading products to keep UI responsive (VERBOSE DB READ)."""
+        import pandas as pd
         try:
-            # Připojení k databázi
+            # Připojení k DB
             if not self.connect_to_database():
                 self.root.after(0, self.loading_screen.close)
                 return
@@ -535,22 +536,21 @@ class ObrFormApp:
             self.vybrana_funkce = supplier_info["funkce"]
             produkt_dotaz_kod = supplier_info["produkt_dotaz_kod"]
 
-            # Získání ignorovaných kódů pro tohoto dodavatele
+            # Ignorované kódy
             ignored_codes = self.ignored_codes.get(self.vybrany_dodavatel_kod, [])
 
-            # Před hlavním dotazem - s explicitní kolací
+            # Přípravná tabulka
             self.cursor.execute("""
                 CREATE TABLE #IgnoredCodes (
                     SivCode VARCHAR(50) COLLATE DATABASE_DEFAULT
                 )
             """)
 
-            # Vložení ignorovaných kódů
             if ignored_codes:
                 self.cursor.executemany("INSERT INTO #IgnoredCodes VALUES (?)",
                                         [(code,) for code in ignored_codes])
 
-            # Hlavní dotaz - definován vždy
+            # SQL dotaz
             query = f"""
                 SELECT TOP {self.buffer_size} 
                     [{produkt_dotaz_kod}] AS SivCode, 
@@ -559,29 +559,48 @@ class ObrFormApp:
                 join StoItem with(nolock) on (SivStiId = StiId)
                 left join SCategory with(nolock) on (StiScaId = ScaId)
                 WHERE [{self.column_mapping['supplier']}] = ?
-                and not exists (Select top 1 1 from Attach with(nolock) where AttSrcId = StiId and AttPedId = 52 and (AttTag like 'sys-gal%' or AttTag = 'sys-enl' or AttTag = 'sys-thu')) --neexistuje velký, náhledový ani galeriový
-                AND StiPLPict is null
-                AND ScaId not in (8843,8388,8553,8387,6263,8231,7575,5203,2830,269,1668,2391,1634,7209)
-                AND ([{self.column_mapping['notes']}] IS NULL OR [{self.column_mapping['notes']}] = '')
-                AND ([{self.column_mapping['pairing']}] IS NOT NULL AND [{self.column_mapping['pairing']}] <> '')
-                AND NOT EXISTS (
-                    SELECT 1 FROM #IgnoredCodes 
-                    WHERE SivCode = [{self.table_name}].[{produkt_dotaz_kod}] COLLATE DATABASE_DEFAULT
-                ) ORDER BY NEWID()
+                  and not exists (Select top 1 1 from Attach with(nolock) where AttSrcId = StiId and AttPedId = 52 and (AttTag like 'sys-gal%' or AttTag = 'sys-enl' or AttTag = 'sys-thu'))
+                  AND StiPLPict is null
+                  AND ScaId not in (8843,8388,8553,8387,6263,8231,7575,5203,2830,269,1668,2391,1634,7209)
+                  AND ([{self.column_mapping['notes']}] IS NULL OR [{self.column_mapping['notes']}] = '')
+                  AND ([{self.column_mapping['pairing']}] IS NOT NULL AND [{self.column_mapping['pairing']}] <> '')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM #IgnoredCodes 
+                      WHERE SivCode = [{self.table_name}].[{produkt_dotaz_kod}] COLLATE DATABASE_DEFAULT
+                  ) ORDER BY NEWID()
             """
+            params = [self.vybrany_dodavatel_kod]
 
-            print(f"[DEBUG] Provádím dotaz: {query}")
-            print(f"[DEBUG] Parametry: {[self.vybrany_dodavatel_kod]}")
+            # --- VERBOSE VÝPIS PŘED DOTAZEM ---
+            print("\n" + "=" * 80)
+            print("[DB READ] START – výběr produktů bez obrázků")
+            print("-" * 80)
+            print("Dodavatel:", self.vybrany_dodavatel, "| Kód:", self.vybrany_dodavatel_kod)
+            print("Tabulka:", self.table_name)
+            print("TOP:", self.buffer_size)
+            print("Parametry:", params)
+            print("SQL:")
+            print(query.strip())
+            print("-" * 80)
 
-            self.cursor.execute(query, [self.vybrany_dodavatel_kod])
-            self.filtrovane_produkty = [
-                {'SivCode': row.SivCode, 'SivName': row.SivName}
-                for row in self.cursor.fetchall()
-            ]
+            # Provedení dotazu a převod do tabulky
+            self.cursor.execute(query, params)
+            rows = self.cursor.fetchall()
+            self.filtrovane_produkty = [{'SivCode': r.SivCode, 'SivName': r.SivName} for r in rows]
 
-            print(f"[DEBUG] Načteno {len(self.filtrovane_produkty)} produktů (ignorováno {len(ignored_codes)})")
+            df = pd.DataFrame(self.filtrovane_produkty, columns=["SivCode", "SivName"])
+            print(f"Počet načtených řádků: {len(df)} (ignorováno: {len(ignored_codes)})")
+            if not df.empty:
+                # Přehledná tabulka (bez indexu)
+                print("\nNÁHLED DAT (max 50 řádků):")
+                print(df.head(50).to_string(index=False))
+            else:
+                print("\nVýsledek je prázdný.")
 
-            # Uzavření databáze
+            print("=" * 80 + "\n")
+            # --- /VERBOSE ---
+
+            # Uzavření DB (jen pro čtení)
             self.close_database()
 
             if not self.filtrovane_produkty:
@@ -599,7 +618,7 @@ class ObrFormApp:
             self.img_refs = {}
             self.all_check_var.set(False)
 
-            # Spuštění asynchronního načítání obrázků
+            # Spuštění načítání obrázků
             self.start_async_image_loading()
 
         except Exception as e:
@@ -933,14 +952,15 @@ class ObrFormApp:
             self.produkt_check_vars[kod].set(False)
 
     def potvrdit_vse(self):
-        """Potvrdí všechny vybrané produkty, uloží je do DB a připíše log do Excelu.
-           Po uložení provede normalizaci vzorců přes Excel COM (bez zálohy/kopie)."""
+        """Uloží vybrané obrázky do DB + log (VERBOSE DB WRITE) a zobrazí přehlednou tabulku změn."""
+        import pandas as pd
+
         if not self.connect_to_database():
             return
 
         excel_path = getattr(self, "EXCEL_LOG_PATH", "obrazky_log.xlsx")
 
-        # Otevři / vytvoř sešit + list
+        # Připrava Excel sešitu (beze změn v logice)
         try:
             wb = load_workbook(excel_path)
             ws = wb.active
@@ -949,73 +969,72 @@ class ObrFormApp:
             ws = wb.active
             ws.title = "Log"
 
-        # Hlavičky a formát jen pokud chybí
         if ws.max_row < 1 or ws["A1"].value is None or ws["B1"].value is None:
             ws["A1"].value = "ZAPSAL"
             ws["B1"].value = "NEPOTVRDIL"
-
             green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
             red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
             bold_font = Font(bold=True)
-
             for cell in ("A1",):
                 ws[cell].fill = green_fill
                 ws[cell].font = bold_font
                 ws[cell].alignment = Alignment(horizontal="center", vertical="center")
-
             for cell in ("B1",):
                 ws[cell].fill = red_fill
                 ws[cell].font = bold_font
                 ws[cell].alignment = Alignment(horizontal="center", vertical="center")
 
-        # Šířky sloupců na ~180 px (přepočet pomocí helperu)
         target_width_chars = self.px_to_excel_col_width(180)
         ws.column_dimensions["A"].width = target_width_chars
         ws.column_dimensions["B"].width = target_width_chars
 
         products_to_remove = []
+
+        # --- sběr informací pro přehlednou tabulku zápisu ---
+        pending_updates = []  # pro tabulku „co se bude zapisovat“
+        skipped_or_ignored = []  # pro informaci co se neuložilo
+
         try:
             for kod, data in self.produkt_widgety.items():
-                # Vybrané obrázky (checkboxy)
                 vybrane_urls = [
                     url for i, url in enumerate(data["urls"])
                     if i < len(data["image_vars"]) and data["image_vars"][i].get()
                 ]
 
-                # Featured dopředu, pokud je vybraný
                 fi = self.featured_index.get(kod)
                 if fi is not None and 0 <= fi < len(data["urls"]):
                     featured_url = data["urls"][fi]
                     if featured_url in vybrane_urls:
                         vybrane_urls = [featured_url] + [u for u in vybrane_urls if u != featured_url]
 
-                # Nevybrané (pro Excel do sloupce B)
                 nevybrane_urls = [
                     url for i, url in enumerate(data["urls"])
                     if not (i < len(data["image_vars"]) and data["image_vars"][i].get())
                 ]
 
-                # --- Excel: připisování řádků s OBRÁZEK() ---
+                # Excel log (beze změn)
                 next_row = ws.max_row + 1
-
-                # ZAPSAL -> sloupec A
                 for url in vybrane_urls:
                     ws.cell(row=next_row, column=1).value = f'=OBRÁZEK("{url}","zapsal",1)'
-                    ws.row_dimensions[next_row].height = self.px_to_points(100)  # 100 px na řádek
+                    ws.row_dimensions[next_row].height = self.px_to_points(100)
                     next_row += 1
-
-                # NEPOTVRDIL -> sloupec B
                 for url in nevybrane_urls:
                     ws.cell(row=next_row, column=2).value = f'=OBRÁZEK("{url}","nepotvrdil",1)'
                     ws.row_dimensions[next_row].height = self.px_to_points(100)
                     next_row += 1
-                # --- konec Excel logu pro daný produkt ---
 
-                # --- Uložení do DB (jen když je něco vybrané) ---
                 if vybrane_urls:
                     produkt = data["produkt"]
                     zapis = ";\n".join(vybrane_urls) + ";"
 
+                    # --- VERBOSE buffer pro tabulku ---
+                    pending_updates.append({
+                        "SivCode": produkt["SivCode"],
+                        "PocetURL": len(vybrane_urls),
+                        "PrvniURL": vybrane_urls[0] if vybrane_urls else ""
+                    })
+
+                    # VLASTNÍ UPDATE
                     query = f"""
                         UPDATE [{self.table_name}]
                         SET [{self.column_mapping['notes']}] = ?
@@ -1024,26 +1043,43 @@ class ObrFormApp:
                     self.cursor.execute(query, (zapis, produkt["SivCode"]))
                     products_to_remove.append(kod)
                 else:
-                    # Pokud nebyly vybrány žádné obrázky, přidat do ignorovaných
                     self.add_ignored_code(self.vybrany_dodavatel_kod, kod)
                     products_to_remove.append(kod)
+                    skipped_or_ignored.append({"SivCode": kod, "Důvod": "nic nevybráno → ignorováno"})
 
-            # Uložení červeně označených obrázků na disk
+            # Uložení červeně označených na disk (beze změn)
             for (kod, index) in self.red_frame_images:
                 if (kod in self.original_images and index < len(self.original_images[kod])):
                     image_data = self.original_images[kod][index]
-                    self.save_image_to_disk(
-                        image_data,
-                        self.vybrany_dodavatel_kod,
-                        kod,
-                        index
-                    )
+                    self.save_image_to_disk(image_data, self.vybrany_dodavatel_kod, kod, index)
 
-            # Commit DB i uložení Excelu
+            # --- VERBOSE: shrnutí před commitem ---
+            print("\n" + "=" * 80)
+            print("[DB WRITE] START – zápis vybraných obrázků do DB")
+            print("-" * 80)
+            print("Tabulka:", self.table_name)
+            if pending_updates:
+                dfw = pd.DataFrame(pending_updates, columns=["SivCode", "PocetURL", "PrvniURL"])
+                print("Plánované UPDATE (počet řádků):", len(dfw))
+                print(dfw.to_string(index=False, max_colwidth=120))
+            else:
+                print("Nebude se zapisovat žádná položka (vše ignorováno / nic nevybráno).")
+
+            if skipped_or_ignored:
+                dfs = pd.DataFrame(skipped_or_ignored)
+                print("\nPřeskočené/ignorované položky:")
+                print(dfs.to_string(index=False))
+            print("-" * 80)
+
+            # Commit DB + uložení Excelu
             self.conn.commit()
             wb.save(excel_path)
 
-            # === Post-processing: normalizace přes Excel COM (bez kopie) ===
+            print("[DB WRITE] COMMIT OK")
+            print("=" * 80 + "\n")
+            # --- /VERBOSE ---
+
+            # Post-processing Excel (tvoje stávající logika beze změn)
             com_result = {"status": "skipped", "reason": "missing_pywin32_or_excel"}
             try:
                 try:
@@ -1052,7 +1088,7 @@ class ObrFormApp:
                     win32 = None
 
                 if win32 is not None:
-                    XL_CELL_TYPE_FORMULAS = -4123  # xlCellTypeFormulas
+                    XL_CELL_TYPE_FORMULAS = -4123
                     excel = win32.Dispatch("Excel.Application")
                     excel.Visible = False
                     excel.DisplayAlerts = False
@@ -1071,11 +1107,11 @@ class ObrFormApp:
                                 try:
                                     fl = cell.FormulaLocal
                                     if isinstance(fl, str) and fl.startswith("=@"):
-                                        cell.Formula2Local = "=" + fl[2:]  # explicitní '@' pryč
+                                        cell.Formula2Local = "=" + fl[2:]
                                         fixed += 1
                                     else:
                                         try:
-                                            cell.Formula2Local = cell.Formula2Local  # normalizace
+                                            cell.Formula2Local = cell.Formula2Local
                                             normalized += 1
                                         except Exception:
                                             skipped += 1
@@ -1090,12 +1126,10 @@ class ObrFormApp:
                         wb_com.Close(SaveChanges=False)
                         excel.Quit()
             except Exception as e:
-                # COM selhal z jiného důvodu – necháme fallback
                 com_result = {"status": "error", "error": str(e)}
 
             print(f"[INFO] Excel COM normalization: {com_result}")
 
-            # Fallback: když COM nebyl k dispozici/selhal – pokus o prosté odstranění '@' a případná instrukce
             if com_result.get("status") != "ok":
                 try:
                     fixed = self.strip_at_from_formulas(excel_path)
@@ -1105,11 +1139,9 @@ class ObrFormApp:
                 except Exception as e:
                     print(f"[WARN] Fallback openpyxl selhal: {e}")
                     self.write_repair_instructions(excel_path)
-            # === konec post-processingu ===
 
             messagebox.showinfo("Info", "Všechny vybrané produkty byly uloženy.")
 
-            # Odstranění uložených produktů z GUI
             for kod in products_to_remove:
                 if kod in self.produkt_widgety:
                     self.produkt_widgety[kod]["frame"].destroy()
@@ -1123,8 +1155,6 @@ class ObrFormApp:
         finally:
             self.close_database()
             self.red_frame_images.clear()
-
-            # Automaticky načíst další produkty
             if self.vybrany_dodavatel and self.vybrany_dodavatel_kod:
                 self.combo_selected(None)
             else:
