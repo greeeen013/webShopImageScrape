@@ -19,8 +19,8 @@ from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
 
 
-from ShopScraper import octo_get_product_images, directdeal_get_product_images, api_get_product_images, easynotebooks_get_product_images, kosatec_get_product_images, dcs_get_product_images, incomgroup_get_product_images, wortmann_get_product_images, wave_get_product_images
-from ShopSelenium import fourcom_get_product_images, notebooksbilliger_get_product_images, komputronik_get_product_images
+from ShopScraper import octo_get_product_images, directdeal_get_product_images, api_get_product_images, easynotebooks_get_product_images, kosatec_get_product_images, dcs_get_product_images, incomgroup_get_product_images, wortmann_get_product_images
+from ShopSelenium import fourcom_get_product_images, notebooksbilliger_get_product_images, komputronik_get_product_images, wave_get_product_images
 
 DODAVATELE = {
     # klasickej scrape
@@ -32,9 +32,10 @@ DODAVATELE = {
     "Dcs (nekvalitní)": {"kod": "319004", "produkt_dotaz_kod": "SivCode", "funkce": dcs_get_product_images, "paralelně": True},
     "IncomGroup": {"kod": "169701", "produkt_dotaz_kod": "SivCode2", "funkce": incomgroup_get_product_images, "paralelně": True},
     "Wortmann": {"kod": "190157", "produkt_dotaz_kod": "SivCode", "funkce": wortmann_get_product_images, "paralelně": True},
-    "Wave": {"kod": "115565", "produkt_dotaz_kod": "SivCode", "funkce": wave_get_product_images, "paralelně": True},
+
 
     # selenium
+    "Wave": {"kod": "115565", "produkt_dotaz_kod": "SivCode", "funkce": wave_get_product_images, "paralelně": True},
     "notebooksbilliger (selenium)": {"kod": "340871", "produkt_dotaz_kod": "SivCode", "funkce": notebooksbilliger_get_product_images, "paralelně": False},
     "fourcom (selenium)": {"kod": "312585", "produkt_dotaz_kod": "SivCode", "funkce": fourcom_get_product_images, "paralelně": False},
     "Komputronik (selenium)": {"kod": "104584", "produkt_dotaz_kod": "SivCode", "funkce": komputronik_get_product_images, "paralelně": False},
@@ -584,7 +585,8 @@ class ObrFormApp:
                 join StoItem with(nolock) on (SivStiId = StiId)
                 left join SCategory with(nolock) on (StiScaId = ScaId)
                 WHERE [{self.column_mapping['supplier']}] = ?
-                  and not exists (Select top 1 1 from Attach with(nolock) where AttSrcId = StiId and AttPedId = 52 and (AttTag like 'sys-gal%' or AttTag = 'sys-enl' or AttTag = 'sys-thu'))
+                  AND SivOrdVen = 1
+                  AND not exists (Select top 1 1 from Attach with(nolock) where AttSrcId = StiId and AttPedId = 52 and (AttTag like 'sys-gal%' or AttTag = 'sys-enl' or AttTag = 'sys-thu'))
                   AND StiPLPict is null
                   AND ScaId not in (8843,8388,8553,8387,6263,8231,7575,5203,2830,269,1668,2391,1634,7209)
                   AND ([{self.column_mapping['notes']}] IS NULL OR [{self.column_mapping['notes']}] = '')
