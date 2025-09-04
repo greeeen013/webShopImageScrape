@@ -310,9 +310,201 @@ async def komputronik_get_product_images(PNumber):
             pass
 
 
+async def wave_get_product_images(PNumber):
+    import re
+    import urllib.parse
+    from urllib.parse import urljoin
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+
+    BASE = "https://www.wave-distribution.de"
+    driver = get_chrome_driver(headless=True)
+
+    def click_cookie_banner(drv):
+        try:
+            # Usercentrics / běžné varianty
+            candidates = drv.find_elements(By.CSS_SELECTOR, "button, [role='button']")
+            for b in candidates:
+                txt = (b.text or b.get_attribute("aria-label") or "").strip().lower()
+                if any(k in txt for k in ["akzept", "alle akzeptieren", "accept all", "accept", "zustimmen", "souhlas", "přijmout"]):
+                    b.click()
+                    logger.debug("Cookie banner dismissed by text match")
+                    return
+            # Některé instalace mají specifický shadow-root – necháme být, pokud není nalezeno, nevadí
+        except Exception:
+            pass
+
+    def wait_for_any(drv, timeout=20):
+        """
+        Počkej buď na galerii na detailu, nebo na seznam produktů.
+        Vrací string 'detail' nebo 'listing'
+        """
+        def _cond(d):
+            # a) rovnou detail (galerie přítomná)
+            if d.find_elements(By.CSS_SELECTOR, "div.swiper-wrapper img[srcset]"):
+                return "detail"
+            # b) různé možné gridy/výpisy
+            listing_selectors = [
+                "a.product-teaser__link",
+                "div.productbox a[href*='/p/']",
+                "a[href^='/p/'][title]",   # často mají title = název produktu
+                "article a[href*='/p/']",
+                "ul li a[href*='/p/']",
+                "div.listing a[href*='/p/']",
+            ]
+            for sel in listing_selectors:
+                if d.find_elements(By.CSS_SELECTOR, sel):
+                    return "listing"
+            return False
+
+        return WebDriverWait(drv, timeout).until(_cond)
+
+    def open_first_product(drv):
+        # zkuste najít item, který přímo obsahuje PNumber (v textu nebo title)
+        links = []
+        listing_selectors = [
+            "a.product-teaser__link",
+            "div.productbox a[href*='/p/']",
+            "a[href^='/p/'][title]",
+            "article a[href*='/p/']",
+            "div.listing a[href*='/p/']",
+            "a[href*='/p/']",
+        ]
+        seen = set()
+        for sel in listing_selectors:
+            for a in drv.find_elements(By.CSS_SELECTOR, sel):
+                href = a.get_attribute("href") or ""
+                if "/p/" in href and href not in seen:
+                    seen.add(href)
+                    links.append(a)
+
+        # preferuj ty, kde je PNumber v textu/title
+        def score(el):
+            title = (el.get_attribute("title") or "").lower()
+            txt = (el.text or "").lower()
+            return int(PNumber.lower() in title or PNumber.lower() in txt)
+
+        links.sort(key=score, reverse=True)
+
+        if not links:
+            raise Exception("Nenalezen žádný odkaz na produkt ve výpisu.")
+
+        target = links[0]
+        url = target.get_attribute("href")
+        logger.debug(f"Opening product detail: {url}")
+        drv.get(url)
+
+    try:
+        search_url = f"{BASE}/listing.xhtml?q={urllib.parse.quote(PNumber)}"
+        logger.debug(f"Navigating to {search_url}")
+        driver.get(search_url)
+
+        # cookie lišta (neblokující, jen se o to pokusíme)
+        click_cookie_banner(driver)
+
+        where = wait_for_any(driver, timeout=25)
+        logger.debug(f"Initial page type detected: {where}")
+
+        if where == "listing":
+            open_first_product(driver)
+            # po přechodu na detail ještě jednou pro cookie lištu
+            click_cookie_banner(driver)
+            WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "div.swiper-wrapper img[srcset]"))
+            )
+
+        # jsme na detailu
+        # pro jistotu poscrollujeme, ať se lazy načtou srcsety
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight/3);")
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight/1.5);")
+
+        img_els = driver.find_elements(By.CSS_SELECTOR, "div.swiper-wrapper img[srcset]")
+
+        image_urls, seen = [], set()
+
+        for img in img_els:
+            srcset = (img.get_attribute("srcset") or "").strip()
+            if not srcset:
+                continue
+
+            # Rozparsuj srcset na položky "url [descriptor]" oddělené čárkou
+            parts = [p.strip() for p in srcset.split(",") if p.strip()]
+
+            best_url = None
+            best_score = -1  # vyšší = lepší
+
+            for p in parts:
+                tokens = p.split()
+                url_token = tokens[0].strip()
+                desc = tokens[1].strip() if len(tokens) > 1 else ""
+
+                # 1) Preferuj originál (obsahuje "/p/o/")
+                if "/p/o/" in url_token:
+                    best_url = url_token
+                    best_score = 10 ** 9
+                    break
+
+                # 2) Jinak skóruj podle descriptoru (např. "600w", "2x" apod.)
+                score = 0
+                if desc.endswith("w"):
+                    try:
+                        score = int(desc[:-1])
+                    except:
+                        score = 0
+                elif desc.endswith("x"):
+                    try:
+                        score = int(desc[:-1]) * 1000
+                    except:
+                        score = 0
+
+                if score > best_score:
+                    best_score = score
+                    best_url = url_token
+
+            if not best_url:
+                continue
+
+            absolute = urljoin(BASE, best_url)
+            if absolute not in seen:
+                seen.add(absolute)
+                image_urls.append(absolute)
+
+        # Pro jistotu ještě post-filtr: nech jen originály, pokud jsou k dispozici
+        only_originals = [u for u in image_urls if "/p/o/" in u]
+        if only_originals:
+            image_urls = only_originals
+
+        # (volitelné) seřaď, aby šly v pořadí základ, _1, _2, _3
+        import re
+        def suffix_key(u):
+            m = re.search(r"_(\d+)\.jpg$", u)
+            return 0 if m is None else int(m.group(1)) + 1
+
+        image_urls.sort(key=suffix_key)
+
+        return image_urls
+
+    except Exception as e:
+        logger.error(f"Error in wave_get_product_images: {str(e)}", exc_info=True)
+        try:
+            driver.save_screenshot("wave_debug.png")
+            logger.debug("Saved screenshot to wave_debug.png")
+        except Exception:
+            pass
+        return []
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+
+
+
 if __name__ == "__main__":
     import asyncio
-
+    print(asyncio.run(wave_get_product_images("100093375")))
     #print(asyncio.run(notebooksbilliger_get_product_images("A1064333")))
     #print(asyncio.run(komputronik_get_product_images("MOD-PHA-047")))
-    print(asyncio.run(fourcom_get_product_images("532754")))
+    #print(asyncio.run(fourcom_get_product_images("532754")))
