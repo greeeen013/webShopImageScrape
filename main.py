@@ -35,7 +35,7 @@ DODAVATELE = {
 
 
     # selenium
-    "Wave": {"kod": "115565", "produkt_dotaz_kod": "SivCode", "funkce": wave_get_product_images, "paralelně": True},
+    "Wave (selenium)": {"kod": "115565", "produkt_dotaz_kod": "SivCode", "funkce": wave_get_product_images, "paralelně": False},
     "notebooksbilliger (selenium)": {"kod": "340871", "produkt_dotaz_kod": "SivCode", "funkce": notebooksbilliger_get_product_images, "paralelně": False},
     "fourcom (selenium)": {"kod": "312585", "produkt_dotaz_kod": "SivCode", "funkce": fourcom_get_product_images, "paralelně": False},
     "Komputronik (selenium)": {"kod": "104584", "produkt_dotaz_kod": "SivCode", "funkce": komputronik_get_product_images, "paralelně": False},
