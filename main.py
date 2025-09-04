@@ -632,6 +632,7 @@ class ObrFormApp:
 
             if not self.filtrovane_produkty:
                 self.root.after(0, lambda: messagebox.showinfo("Info", "Žádné produkty k doplnění."))
+                self.root.after(0, self.hide_overlay)
                 self.root.after(0, self.loading_screen.close)
                 return
 
@@ -1178,7 +1179,7 @@ class ObrFormApp:
                     print(f"[WARN] Fallback openpyxl selhal: {e}")
                     self.write_repair_instructions(excel_path)
 
-            messagebox.showinfo("Info", "Všechny vybrané produkty byly uloženy.")
+            #messagebox.showinfo("Info", "Všechny vybrané produkty byly uloženy.")
 
             for kod in products_to_remove:
                 if kod in self.produkt_widgety:
