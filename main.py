@@ -576,11 +576,12 @@ class ObrFormApp:
                 self.cursor.executemany("INSERT INTO #IgnoredCodes VALUES (?)",
                                         [(code,) for code in ignored_codes])
 
-            # SQL dotaz
+            # SQL dotaz - přidáno SivCode2
             query = f"""
                 SELECT TOP {self.buffer_size} 
                     [{produkt_dotaz_kod}] AS SivCode, 
-                    SivName 
+                    SivName,
+                    SivCode2
                 FROM [{self.table_name}]
                 join StoItem with(nolock) on (SivStiId = StiId)
                 left join SCategory with(nolock) on (StiScaId = ScaId)
@@ -615,9 +616,9 @@ class ObrFormApp:
             # Provedení dotazu a převod do tabulky
             self.cursor.execute(query, params)
             rows = self.cursor.fetchall()
-            self.filtrovane_produkty = [{'SivCode': r.SivCode, 'SivName': r.SivName} for r in rows]
+            self.filtrovane_produkty = [{'SivCode': r.SivCode, 'SivName': r.SivName, 'SivCode2': r.SivCode2} for r in rows]
 
-            df = pd.DataFrame(self.filtrovane_produkty, columns=["SivCode", "SivName"])
+            df = pd.DataFrame(self.filtrovane_produkty, columns=["SivCode", "SivName", "SivCode2"])
             print(f"Počet načtených řádků: {len(df)} (ignorováno: {len(ignored_codes)})")
             if not df.empty:
                 # Přehledná tabulka (bez indexu)
@@ -869,11 +870,12 @@ class ObrFormApp:
         """Zobrazí základní informace o produktu."""
         kod = produkt['SivCode']
         nazev = produkt.get('SivName', "")
+        kod2 = produkt.get('SivCode2', "")
 
-        # Frame pro celý produkt
+        # Frame pro celý produkt - TEXT JE NYNÍ PRÁZDNÝ
         frame_produkt = tk.LabelFrame(
             self.inner_frame,
-            text=f"{kod} - {nazev}",
+            text="",  # Prázdný text, nahradíme vlastním widgetem
             font=("Arial", 12, "bold"),
             padx=10,
             pady=10,
@@ -881,8 +883,23 @@ class ObrFormApp:
         frame_produkt.pack(fill=tk.X, padx=10, pady=5, ipadx=5, ipady=5)
         frame_produkt.grid_columnconfigure(0, weight=1)
 
+        # Vytvoření klikatelného labelu s textem pro kopírování
+        label_text = f"{kod} - {nazev} - {kod2}"
+        label_nazev = tk.Label(
+            frame_produkt,
+            text=label_text,
+            font=("Arial", 12, "bold"),
+            cursor="hand2",  # Kurzor ruky při najetí
+            fg="blue",  # Modrý text pro indikaci klikatelnosti
+        )
+        label_nazev.grid(row=0, column=0, sticky=tk.W, pady=(0, 10))
+
+        # Bindování události pro kopírování textu
+        label_nazev.bind("<Button-1>", lambda e: self.copy_to_clipboard(label_text))
+
+        # Zbytek kódu zůstává stejný...
         # Checkbox pro výběr všech obrázků v produktu
-        var_produkt = tk.BooleanVar(value=True) # zaksrtnuty checkbox
+        var_produkt = tk.BooleanVar(value=True)
         self.produkt_check_vars[kod] = var_produkt
 
         chk_produkt = tk.Checkbutton(
@@ -892,11 +909,11 @@ class ObrFormApp:
             font=("Arial", 14, "bold"),
             command=lambda k=kod: self.toggle_product_images(k)
         )
-        chk_produkt.grid(row=0, column=0, sticky=tk.W, pady=(0, 10))
+        chk_produkt.grid(row=1, column=0, sticky=tk.W, pady=(0, 10))  # Pozor: změna row na 1
 
         # Frame pro obrázky
         frame_obrazky = tk.Frame(frame_produkt)
-        frame_obrazky.grid(row=1, column=0, sticky=tk.W)
+        frame_obrazky.grid(row=2, column=0, sticky=tk.W)  # Pozor: změna row na 2
 
         # Uložení widgetů
         self.produkt_widgety[kod] = {
@@ -910,6 +927,13 @@ class ObrFormApp:
 
         # Aktualizovat GUI
         self.canvas.update_idletasks()
+
+    # Nová metoda pro kopírování do schránky
+    def copy_to_clipboard(self, text):
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        # Volitelně zobrazit potvrzení
+        print(f"Text zkopírován: {text}")
 
     def ignore_product(self, kod):
         """Přidá produkt do seznamu ignorovaných."""
@@ -1199,7 +1223,7 @@ class ObrFormApp:
 
             for kod in products_to_remove:
                 if kod in self.produkt_widgety:
-                    self.produkt_widgety[kod]["frame"].destroy()
+                    self.produkt_widgety[kod]['frame'].destroy()
                     del self.produkt_widgety[kod]
                 if kod in self.img_refs:
                     del self.img_refs[kod]
