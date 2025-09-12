@@ -591,6 +591,8 @@ class ObrFormApp:
                   AND ScaId not in (8843,8388,8553,8387,6263,8231,7575,5203,2830,269,1668,2391,1634,7209)
                   AND ([{self.column_mapping['notes']}] IS NULL OR [{self.column_mapping['notes']}] = '')
                   AND ([{self.column_mapping['pairing']}] IS NOT NULL AND [{self.column_mapping['pairing']}] <> '')
+                  AND StiHide = 0
+                  AND StiHideI = 0
                   AND NOT EXISTS (
                       SELECT 1 FROM #IgnoredCodes 
                       WHERE SivCode = [{self.table_name}].[{produkt_dotaz_kod}] COLLATE DATABASE_DEFAULT
@@ -789,82 +791,76 @@ class ObrFormApp:
         self.chk_all.select()  # Select all by default
 
     def load_product_images(self, produkt):
-        """Načte obrázky pro produkt ve vlákně."""
+        """Načte obrázky pro daný produkt ve worker vlákně.
+        Nevykresluje nic předem – UI se vytvoří až při prvním úspěšném obrázku.
+        """
         try:
             kod = produkt['SivCode']
             print(f"[THREAD] Načítám obrázky pro produkt: {kod}")
 
-            # Inicializovat úložiště pro originální obrázky
+            # Příprava úložiště pro originální obrázky (naplní se až v add_single_image)
             if kod not in self.original_images:
                 self.original_images[kod] = []
 
-            # Získání URL obrázků
+            # 1) Získání URL obrázků z funkce pro zvoleného dodavatele (většinou async)
             funkce_pro_dodavatele = self.vybrana_funkce
             if not funkce_pro_dodavatele:
                 print(f"[CHYBA] Pro dodavatele {self.vybrany_dodavatel_kod} není definována funkce")
                 return
 
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            urls = loop.run_until_complete(funkce_pro_dodavatele(kod))
-            loop.close()
+            urls = []
+            if asyncio.iscoroutinefunction(funkce_pro_dodavatele):
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    urls = loop.run_until_complete(funkce_pro_dodavatele(produkt['SivCode']))
+                finally:
+                    loop.close()
+            else:
+                urls = funkce_pro_dodavatele(produkt['SivCode'])
 
-            if not urls:
-                print(f"[INFO] Žádné obrázky pro produkt {kod}, přidávám do ignorovaných")
-                self.add_ignored_code(self.vybrany_dodavatel_kod, kod)
-                return
+            # Normalizace návratu (povolíme tuple/dict, ale výsledkem má být list URL)
+            if isinstance(urls, dict) and 'urls' in urls:
+                urls = urls['urls']
+            if not isinstance(urls, (list, tuple)):
+                urls = []
 
-            # Seznam pro platné obrázky (které nejsou podobné existujícím)
-            valid_urls = []
-            valid_images = []
-
+            # 2) Stažení obrázků (bytes) a základní filtry
+            valid_pairs = []  # (url, image_data)
             for url in urls:
+                if not url:
+                    continue
                 try:
-                    headers = {
-                        "User-Agent": "Mozilla/5.0",
-                        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-                        "Referer": "https://www.incomgroup.pl/"
-                    }
-                    r = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
-
-                    if 'image' not in r.headers.get('Content-Type', '').lower():
-                        print(f"[INFO] Přeskočeno (není obrázek) KOD: {kod}, URL: {url}")
+                    resp = requests.get(url, timeout=10)
+                    if resp.status_code != 200:
                         continue
-
-                    # Uložit originální data obrázku
-                    image_data = r.content
-                    self.original_images[kod].append(image_data)
-
-                    # Kontrola podobnosti s existujícími obrázky
-                    if self.is_image_similar(image_data):
-                        print(f"[INFO] Přeskočeno (podobný obrázek): {url}")
+                    content_type = resp.headers.get("Content-Type", "")
+                    if "image" not in content_type.lower():
                         continue
+                    image_data = resp.content
+                    # Volitelná deduplikace pomocí hashů (pokud je metoda k dispozici)
+                    try:
+                        if hasattr(self, "is_image_similar") and self.is_image_similar(image_data):
+                            # podobný existujícím – přeskočit
+                            continue
+                    except Exception as e:
+                        print(f"[WARN] Deduplikace selhala: {e}")
 
-                    valid_urls.append(url)
-                    valid_images.append(image_data)
-
+                    valid_pairs.append((url, image_data))
                 except Exception as e:
-                    print(f"[CHYBA] Obrázek {url} nelze načíst: {e}")
+                    print(f"[INFO] Stažení obrázku selhalo ({url}): {e}")
 
-            # Pokud nezbyl žádný platný obrázek, přeskočit celý produkt
-            if not valid_urls:
-                print(f"[INFO] Všechny obrázky pro produkt {kod} byly přeskočeny (podobnost)")
-                self.add_ignored_code(self.vybrany_dodavatel_kod, kod)
+            if not valid_pairs:
+                # Žádný použitelný obrázek -> nic nevykreslovat (žádný prázdný groupbox)
+                print(f"[INFO] {kod}: Nenačten žádný použitelný obrázek.")
                 return
 
-            # Zobrazit produkt pouze pokud má platné obrázky
-            self.root.after(0, lambda: self.display_product_with_images(produkt))
-
-            for url, image_data in zip(valid_urls, valid_images):
+            # 3) Předání do UI threadu – vytvoření PhotoImage až v add_single_image
+            for url, image_data in valid_pairs:
                 try:
-                    img = Image.open(io.BytesIO(image_data))
-                    img.verify()
-                    img = Image.open(io.BytesIO(image_data))
-                    img.thumbnail((300, 300))
-                    photo = ImageTk.PhotoImage(img)
-                    self.root.after_idle(self.add_single_image, produkt, url, photo)
+                    self.root.after_idle(self.add_single_image, produkt, url, image_data)
                 except Exception as e:
-                    print(f"[INFO] Chyba při zpracování obrázku {url}: {e}")
+                    print(f"[INFO] Chyba při plánování add_single_image pro {url}: {e}")
 
         except Exception as e:
             print(f"[CHYBA] Při načítání obrázků: {e}")
@@ -923,40 +919,60 @@ class ObrFormApp:
             del self.produkt_widgety[kod]
         messagebox.showinfo("Info", f"Produkt {kod} byl přidán do ignorovaných")
 
-    def add_single_image(self, produkt, url, photo):
-        """Přidá jeden načtený obrázek k produktu."""
+    def add_single_image(self, produkt, url, image_data):
+        """BĚŽÍ V HLAVNÍM TK VLÁKNĚ.
+        Bezpečně vytvoří PhotoImage; teprve při úspěchu zajistí vytvoření produktového frame.
+        Pokud konverze selže, neudělá se nic (ani rám).
+        """
         kod = produkt['SivCode']
 
+        # 1) Pokus o vytvoření PhotoImage v HLAVNÍM vlákně
+        try:
+            img = Image.open(io.BytesIO(image_data))
+            img.verify()  # základní kontrola validity (zničí file pointer)
+            # Po verify je potřeba znovu otevřít
+            img = Image.open(io.BytesIO(image_data))
+            img.thumbnail((300, 300))
+            photo = ImageTk.PhotoImage(img)
+        except Exception as e:
+            print(f"[INFO] add_single_image: selhalo vytvoření PhotoImage pro {kod}: {e}")
+            return  # NIC nevykreslovat → žádný prázdný groupbox
+
+        # 2) Pokud rám pro produkt ještě neexistuje, vytvoř ho teď (až po úspěšném obrázku)
+        if kod not in self.produkt_widgety:
+            self.display_product_with_images(produkt)
+
+        # Ochranné inicializace struktur
         if kod not in self.featured_index:
             self.featured_index[kod] = None
         if kod not in self.image_frames:
             self.image_frames[kod] = []
-
-        if kod not in self.produkt_widgety:
-            return
-
-        # Uložení reference
         if kod not in self.img_refs:
             self.img_refs[kod] = []
-        self.img_refs[kod].append(photo)
+        if kod not in self.image_check_vars:
+            self.image_check_vars[kod] = []
+        if kod not in self.original_images:
+            self.original_images[kod] = []
 
-        # Uložit URL
-        self.produkt_widgety[kod]['urls'].append(url)
+        # 3) Uložení dat v JEDNOTNÉM pořadí (musí sedět indexy napříč vším)
+        self.img_refs[kod].append(photo)  # reference na PhotoImage, aby je GC nesebral
+        self.produkt_widgety[kod]['urls'].append(url)  # logická posloupnost URL
+        self.original_images[kod].append(image_data)  # originální bytes (pro uložení / export)
 
-        # Přidat checkbox pro obrázek
-        img_var = tk.BooleanVar(value=True) # Základně zaškrtnutý
+        # 4) Checkbox proměnná (defaultně zaškrtnutý)
+        img_var = tk.BooleanVar(value=True)
         self.image_check_vars[kod].append(img_var)
         self.produkt_widgety[kod]['image_vars'].append(img_var)
 
-        # Reorganizovat obrázky podle aktuálního nastavení
+        # 5) Rozmístění podle nastavení + refresh
         self.reorganize_images(
             self.produkt_widgety[kod]['images_frame'],
             self.produkt_widgety[kod]['urls'],
             kod
         )
 
-        # Okamžitá aktualizace GUI
         self.root.update_idletasks()
+        self.schedule_scrollregion_update()
 
     def toggle_all(self):
         """Vybere nebo zruší výběr všech obrázků u všech produktů."""
