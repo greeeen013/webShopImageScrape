@@ -30,7 +30,7 @@ DODAVATELE = {
     "NetFactory/easynotebooks": {"kod": "351191", "produkt_dotaz_kod": "SivCode", "funkce": easynotebooks_get_product_images, "paralelně": True},
     "Kosatec": {"kod": "165463", "produkt_dotaz_kod": "SivCode", "funkce": kosatec_get_product_images, "paralelně": True},
     "Dcs (nekvalitní)": {"kod": "319004", "produkt_dotaz_kod": "SivCode", "funkce": dcs_get_product_images, "paralelně": True},
-    "IncomGroup": {"kod": "169701", "produkt_dotaz_kod": "SivCode2", "funkce": incomgroup_get_product_images, "paralelně": True},
+    "IncomGroup": {"kod": "169701", "produkt_dotaz_kod": "SivCode", "funkce": incomgroup_get_product_images, "paralelně": True},
     "Wortmann": {"kod": "190157", "produkt_dotaz_kod": "SivCode", "funkce": wortmann_get_product_images, "paralelně": True},
 
 
@@ -62,6 +62,8 @@ EXCEL_LOG_PATH = "obrazky_log.xlsx"
 
 # Přidáno: Konstanty pro práci s obrázky
 IMG_DIR = "img"
+
+# Nastavení prahu podobnosti (menší hodnota = větší podobnost)
 SIMILARITY_THRESHOLD = 5  # Pro imagehash (max rozdíl 64, menší hodnota = větší podobnost)
 
 
@@ -819,6 +821,31 @@ class ObrFormApp:
         self.chk_all.config(state='normal')
         self.chk_all.select()  # Select all by default
 
+    def remove_duplicate_images(self, image_data_list):
+        """Odstraní duplicitní obrázky z listu na základě podobnosti."""
+        unique_images = []
+        hashes = []
+
+        for image_data in image_data_list:
+            try:
+                img = Image.open(io.BytesIO(image_data))
+                img_hash = imagehash.average_hash(img)
+
+                # Zkontroluj, zda je obrázek podobný nějakému již přidanému
+                is_duplicate = False
+                for existing_hash in hashes:
+                    if img_hash - existing_hash <= SIMILARITY_THRESHOLD:
+                        is_duplicate = True
+                        break
+
+                if not is_duplicate:
+                    unique_images.append(image_data)
+                    hashes.append(img_hash)
+            except Exception as e:
+                print(f"Chyba při zpracování obrázku pro odstranění duplicit: {e}")
+
+        return unique_images
+
     def load_product_images(self, produkt):
         """Načte obrázky pro daný produkt ve worker vlákně.
         Nevykresluje nic předem – UI se vytvoří až při prvním úspěšném obrázku.
@@ -879,6 +906,19 @@ class ObrFormApp:
                 except Exception as e:
                     print(f"[INFO] Stažení obrázku selhalo ({url}): {e}")
 
+            # 3) Odstranění duplicitních obrázků uvnitř produktu
+            image_data_list = [pair[1] for pair in valid_pairs]
+            unique_image_data = self.remove_duplicate_images(image_data_list)
+
+            # Vytvořit nový seznam valid_pairs pouze s unikátními obrázky
+            unique_pairs = []
+            for url, image_data in valid_pairs:
+                if image_data in unique_image_data:
+                    unique_pairs.append((url, image_data))
+                    unique_image_data.remove(image_data)  # Zajistí, že každý obrázek bude pouze jednou
+
+            valid_pairs = unique_pairs
+
             # Inicializace počítadla pro tento produkt
             total_images = len(valid_pairs)
             if total_images == 0:
@@ -894,7 +934,7 @@ class ObrFormApp:
                 print(f"[INFO] {kod}: Nenačten žádný použitelný obrázek.")
                 return
 
-            # 3) Předání do UI threadu – vytvoření PhotoImage až v add_single_image
+            # 4) Předání do UI threadu – vytvoření PhotoImage až v add_single_image
             for url, image_data in valid_pairs:
                 try:
                     self.root.after_idle(self.add_single_image, produkt, url, image_data)
