@@ -162,8 +162,36 @@ class ObrFormApp:
             'pairing': 'SivStiId'
         }
 
+        # Nový atribut pro sledování produktů bez obrázků
+        self.product_image_counters = {}  # {kod: [total_images, processed_count, has_success]}
+
         print("[DEBUG] Inicializace GUI...")
         self.setup_gui()
+
+    def init_product_counter(self, kod, total):
+        """Inicializuje počítadlo pro produkt"""
+        self.product_image_counters[kod] = [total, 0, False]
+
+    def update_product_counter(self, kod, success):
+        """Aktualizuje počítadlo pro produkt a případně přidá do ignorovaných"""
+        if kod not in self.product_image_counters:
+            return
+
+        total, current, has_success = self.product_image_counters[kod]
+        current += 1
+        if success:
+            has_success = True
+
+        if current == total:
+            if not has_success:
+                # Žádný obrázek se nepodařilo načíst - přidat do ignorovaných
+                self.add_ignored_code(self.vybrany_dodavatel_kod, kod)
+                print(f"Produkt {kod} byl automaticky přidán do ignorovaných (žádný validní obrázek)")
+            # Odstranit počítadlo
+            del self.product_image_counters[kod]
+        else:
+            # Aktualizovat počítadlo
+            self.product_image_counters[kod] = [total, current, has_success]
 
     def load_existing_image_hashes(self):
         """Načte hashe existujících obrázků v IMG_DIR"""
@@ -851,6 +879,16 @@ class ObrFormApp:
                 except Exception as e:
                     print(f"[INFO] Stažení obrázku selhalo ({url}): {e}")
 
+            # Inicializace počítadla pro tento produkt
+            total_images = len(valid_pairs)
+            if total_images == 0:
+                # Žádné obrázky k načtení - přidat do ignorovaných
+                self.root.after_idle(self.add_ignored_code, self.vybrany_dodavatel_kod, kod)
+                print(f"Produkt {kod} byl automaticky přidán do ignorovaných (žádné URL)")
+                return
+            else:
+                self.root.after_idle(self.init_product_counter, kod, total_images)
+
             if not valid_pairs:
                 # Žádný použitelný obrázek -> nic nevykreslovat (žádný prázdný groupbox)
                 print(f"[INFO] {kod}: Nenačten žádný použitelný obrázek.")
@@ -949,6 +987,7 @@ class ObrFormApp:
         Pokud konverze selže, neudělá se nic (ani rám).
         """
         kod = produkt['SivCode']
+        success = False
 
         # 1) Pokus o vytvoření PhotoImage v HLAVNÍM vlákně
         try:
@@ -958,8 +997,12 @@ class ObrFormApp:
             img = Image.open(io.BytesIO(image_data))
             img.thumbnail((300, 300))
             photo = ImageTk.PhotoImage(img)
+            success = True
         except Exception as e:
             print(f"[INFO] add_single_image: selhalo vytvoření PhotoImage pro {kod}: {e}")
+            # Aktualizace počítadla - neúspěch
+            if kod in self.product_image_counters:
+                self.update_product_counter(kod, False)
             return  # NIC nevykreslovat → žádný prázdný groupbox
 
         # 2) Pokud rám pro produkt ještě neexistuje, vytvoř ho teď (až po úspěšném obrázku)
@@ -994,6 +1037,10 @@ class ObrFormApp:
             self.produkt_widgety[kod]['urls'],
             kod
         )
+
+        # Aktualizace počítadla - úspěch
+        if kod in self.product_image_counters:
+            self.update_product_counter(kod, True)
 
         self.root.update_idletasks()
         self.schedule_scrollregion_update()
