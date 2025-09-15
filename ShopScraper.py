@@ -491,17 +491,23 @@ async def incomgroup_get_product_images(PNumber):
 
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # Find first product container
+        # Find product container
         print("[DEBUG] Looking for product container...")
-        product_container = soup.find('li', class_='product')
+        product_container = soup.find('ul', class_='products columns-4')
 
         if not product_container:
-            print("[ERROR] No product container found")
+            print("[ERROR] No product container found on search page")
             return []
 
-        # Find product link
-        print("[DEBUG] Extracting product link...")
-        product_link = product_container.find('a', href=True)
+        print("[DEBUG] Found product container, looking for first product link...")
+        first_product = product_container.find('li', class_='product')
+
+        if not first_product:
+            print("[ERROR] No products found in container")
+            return []
+
+        product_link = first_product.find('a', href=True)
+
         if not product_link:
             print("[ERROR] No product link found")
             return []
@@ -520,56 +526,44 @@ async def incomgroup_get_product_images(PNumber):
 
         product_soup = BeautifulSoup(product_response.text, 'html.parser')
 
-        # Find image gallery container
+        # Check if manufacturer code matches (Symbol producenta)
+        print("[DEBUG] Checking manufacturer code (Symbol producenta)...")
+        manufacturer_divs = product_soup.find_all('div', class_='et_pb_text_inner')
+        manufacturer_code_found = False
+
+        for div in manufacturer_divs:
+            if "Symbol producenta:" in div.get_text():
+                manufacturer_text = div.get_text()
+                if PNumber in manufacturer_text:
+                    manufacturer_code_found = True
+                    print(f"[DEBUG] Manufacturer code matches: {PNumber}")
+                    break
+
+        if not manufacturer_code_found:
+            print(f"[ERROR] Manufacturer code doesn't match. Expected: {PNumber}")
+            return []
+
+        # Find image gallery
         print("[DEBUG] Looking for image gallery...")
         gallery_container = product_soup.find('div', class_='woocommerce-product-gallery__wrapper')
-
-        if not gallery_container:
-            print("[DEBUG] Gallery not found, trying alternative container...")
-            gallery_container = product_soup.find('div', class_='flex-viewport')
 
         if not gallery_container:
             print("[ERROR] No gallery container found")
             return []
 
-        # Extract all image links
-        print("[DEBUG] Extracting image links...")
+        # Extract all image links (from <a> tags, not <img>)
+        print("[DEBUG] Extracting image links from gallery...")
         image_links = gallery_container.find_all('a', href=True)
 
-        if not image_links:
-            print("[DEBUG] No <a> tags found, trying <img> tags directly...")
-            images = gallery_container.find_all('img', src=True)
-            image_urls = [img['src'] for img in images if img.get('src')]
-        else:
-            image_urls = [link['href'] for link in image_links]
+        image_urls = []
+        for link in image_links:
+            href = link['href']
+            if href and href not in image_urls:
+                image_urls.append(href)
+                print(f"[DEBUG] Found image URL: {href}")
 
-        # Normalize URLs and remove duplicates
-        print(f"[DEBUG] Found {len(image_urls)} raw image URLs")
-        normalized_urls = []
-        for url in image_urls:
-            # Skip empty URLs
-            if not url.strip():
-                continue
-
-            # Handle protocol-relative URLs
-            if url.startswith('//'):
-                url = 'https:' + url
-            # Handle relative URLs
-            elif url.startswith('/'):
-                url = 'https://www.incomgroup.pl' + url
-
-            normalized_urls.append(url)
-
-        # Remove duplicates while preserving order
-        unique_urls = []
-        seen = set()
-        for url in normalized_urls:
-            if url not in seen:
-                seen.add(url)
-                unique_urls.append(url)
-
-        print(f"[DEBUG] Found {len(unique_urls)} unique image URLs")
-        return unique_urls
+        print(f"[DEBUG] Found {len(image_urls)} unique image URLs")
+        return image_urls
 
     except requests.exceptions.RequestException as e:
         print(f"[ERROR] Network request failed: {str(e)}")
@@ -644,6 +638,6 @@ async def wortmann_get_product_images(PNumber):
 
 
 if __name__ == "__main__":
-    #print(asyncio.run(incomgroup_get_product_images("210-BFIS")))
+    print(asyncio.run(incomgroup_get_product_images("UM.HV0EE.E13")))
     #print(asyncio.run(wortmann_get_product_images(5310021)))
-    print(asyncio.run(dcs_get_product_images(1002233635)))
+    #print(asyncio.run(dcs_get_product_images(1002233635)))
