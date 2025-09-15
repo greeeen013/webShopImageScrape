@@ -30,7 +30,7 @@ DODAVATELE = {
     "NetFactory/easynotebooks": {"kod": "351191", "produkt_dotaz_kod": "SivCode", "funkce": easynotebooks_get_product_images, "paralelně": True},
     "Kosatec": {"kod": "165463", "produkt_dotaz_kod": "SivCode", "funkce": kosatec_get_product_images, "paralelně": True},
     "Dcs (nekvalitní)": {"kod": "319004", "produkt_dotaz_kod": "SivCode", "funkce": dcs_get_product_images, "paralelně": True},
-    "IncomGroup": {"kod": "169701", "produkt_dotaz_kod": "SivCode", "funkce": incomgroup_get_product_images, "paralelně": True},
+    "IncomGroup": {"kod": "169701", "produkt_dotaz_kod": "SivCode2", "funkce": incomgroup_get_product_images, "paralelně": True},
     "Wortmann": {"kod": "190157", "produkt_dotaz_kod": "SivCode", "funkce": wortmann_get_product_images, "paralelně": True},
 
 
@@ -56,6 +56,9 @@ OBRAZKY_NA_RADEK = ["2", "3", "4", "5", "6", "nekonečno"]
 
 # Nová konstanta pro soubor s ignorovanými produkty
 IGNORE_FILE = "ignoreSivCode.json"
+
+# Nová konstanta pro dočasně ignorované produkty (pro více instancí)
+IGNORE_TEMP_FILE = "ignoredTempCodes.json"
 
 # Nové konstanty pro práci s logování obrázků
 EXCEL_LOG_PATH = "obrazky_log.xlsx"
@@ -296,6 +299,62 @@ class ObrFormApp:
             self.ignored_codes[supplier_code].append(siv_code)
             self.save_ignored_codes()
 
+    def load_ignored_temp_codes(self):
+        """Načte dočasně ignorované kódy z JSON souboru"""
+        try:
+            if os.path.exists(IGNORE_TEMP_FILE):
+                with open(IGNORE_TEMP_FILE, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            return {}
+        except Exception as e:
+            print(f"[CHYBA] Načtení dočasně ignorovaných kódů: {e}")
+            return {}
+
+    def save_ignored_temp_codes(self, data):
+        """Uloží dočasně ignorované kódy do JSON souboru"""
+        try:
+            with open(IGNORE_TEMP_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            print(f"[CHYBA] Ukládání dočasně ignorovaných kódů: {e}")
+
+    def add_ignored_temp_codes(self, supplier_code, siv_codes):
+        """Přidá kódy do dočasně ignorovaných pro daného dodavatele"""
+        temp_data = self.load_ignored_temp_codes()
+
+        if supplier_code not in temp_data:
+            temp_data[supplier_code] = []
+
+        # Přidat pouze nové kódy
+        for code in siv_codes:
+            if code not in temp_data[supplier_code]:
+                temp_data[supplier_code].append(code)
+
+        self.save_ignored_temp_codes(temp_data)
+
+    def remove_ignored_temp_codes(self, supplier_code, siv_codes):
+        """Odstraní kódy z dočasně ignorovaných pro daného dodavatele"""
+        temp_data = self.load_ignored_temp_codes()
+
+        if supplier_code in temp_data:
+            # Odstranit pouze existující kódy
+            temp_data[supplier_code] = [code for code in temp_data[supplier_code] if code not in siv_codes]
+
+            # Pokud je seznam prázdný, odstranit celého dodavatele
+            if not temp_data[supplier_code]:
+                del temp_data[supplier_code]
+
+            self.save_ignored_temp_codes(temp_data)
+
+    def clear_temp_codes_for_supplier(self, supplier_code):
+        """Smaže dočasně ignorované kódy pro daného dodavatele"""
+        temp_data = self.load_ignored_temp_codes()
+
+        if supplier_code in temp_data:
+            del temp_data[supplier_code]
+            self.save_ignored_temp_codes(temp_data)
+            print(f"[INFO] Smazány dočasné kódy pro dodavatele: {supplier_code}")
+
     def connect_to_database(self):
         """Připojí se k SQL Serveru"""
         try:
@@ -521,6 +580,10 @@ class ObrFormApp:
 
     def combo_selected(self, event):
         """Zpracuje výběr dodavatele a počtu produktů (při každém reloadu vyjet nahoru)."""
+        # Pokud už byl vybrán nějaký dodavatel, smaž jeho dočasné kódy
+        if hasattr(self, 'vybrany_dodavatel_kod') and self.vybrany_dodavatel_kod:
+            self.clear_temp_codes_for_supplier(self.vybrany_dodavatel_kod)
+
         self.vybrany_dodavatel = self.combo_dodavatel.get()
         info = DODAVATELE[self.vybrany_dodavatel]
         self.vybrany_dodavatel_kod = info["kod"]
@@ -576,6 +639,10 @@ class ObrFormApp:
         """Thread for loading products to keep UI responsive (VERBOSE DB READ)."""
         import pandas as pd
         try:
+            # Načíst dočasně ignorované kódy
+            ignored_temp_codes = self.load_ignored_temp_codes()
+            ignored_temp_for_supplier = ignored_temp_codes.get(self.vybrany_dodavatel_kod, [])
+
             # Připojení k DB
             if not self.connect_to_database():
                 self.root.after(0, self.loading_screen.close)
@@ -592,8 +659,9 @@ class ObrFormApp:
             self.vybrana_funkce = supplier_info["funkce"]
             produkt_dotaz_kod = supplier_info["produkt_dotaz_kod"]
 
-            # Ignorované kódy
+            # Ignorované kódy (trvalé + dočasné)
             ignored_codes = self.ignored_codes.get(self.vybrany_dodavatel_kod, [])
+            ignored_codes.extend(ignored_temp_for_supplier)  # Přidat dočasně ignorované
 
             # Přípravná tabulka
             self.cursor.execute("""
@@ -646,7 +714,8 @@ class ObrFormApp:
             # Provedení dotazu a převod do tabulky
             self.cursor.execute(query, params)
             rows = self.cursor.fetchall()
-            self.filtrovane_produkty = [{'SivCode': r.SivCode, 'SivName': r.SivName, 'SivCode2': r.SivCode2} for r in rows]
+            self.filtrovane_produkty = [{'SivCode': r.SivCode, 'SivName': r.SivName, 'SivCode2': r.SivCode2} for r in
+                                        rows]
 
             df = pd.DataFrame(self.filtrovane_produkty, columns=["SivCode", "SivName", "SivCode2"])
             print(f"Počet načtených řádků: {len(df)} (ignorováno: {len(ignored_codes)})")
@@ -662,6 +731,11 @@ class ObrFormApp:
 
             # Uzavření DB (jen pro čtení)
             self.close_database()
+
+            # Po získání produktů je přidáme do dočasně ignorovaných
+            if self.filtrovane_produkty:
+                siv_codes = [p['SivCode'] for p in self.filtrovane_produkty]
+                self.add_ignored_temp_codes(self.vybrany_dodavatel_kod, siv_codes)
 
             if not self.filtrovane_produkty:
                 self.root.after(0, lambda: messagebox.showinfo("Info", "Žádné produkty k doplnění."))
@@ -710,10 +784,18 @@ class ObrFormApp:
             if overlay:
                 if self.featured_index[kod] == i:
                     overlay.place(x=5, y=5)  # zobrazíme placku "1" vlevo nahoře
-                    f.configure(highlightbackground="black", highlightthickness=2)
+                    # Zachovat červený rámeček pokud je obrázek označen k ignorování
+                    if (kod, i) in self.red_frame_images:
+                        f.configure(highlightbackground="red", highlightthickness=2)
+                    else:
+                        f.configure(highlightbackground="black", highlightthickness=2)
                 else:
                     overlay.place_forget()
-                    f.configure(highlightthickness=0)
+                    # Zachovat červený rámeček pokud je obrázek označen k ignorování
+                    if (kod, i) in self.red_frame_images:
+                        f.configure(highlightbackground="red", highlightthickness=2)
+                    else:
+                        f.configure(highlightthickness=0)
 
     def clear_gui(self):
         """Clear the GUI in the main thread + posunout scroll nahoru."""
@@ -1155,6 +1237,7 @@ class ObrFormApp:
         ws.column_dimensions["B"].width = target_width_chars
 
         products_to_remove = []
+        codes_to_remove = []  # Kódy, které budou odstraněny z dočasného ignorování
 
         # --- sběr informací pro přehlednou tabulku zápisu ---
         pending_updates = []  # pro tabulku „co se bude zapisovat“
@@ -1208,9 +1291,11 @@ class ObrFormApp:
                     """
                     self.cursor.execute(query, (zapis, produkt["SivCode"]))
                     products_to_remove.append(kod)
+                    codes_to_remove.append(kod)
                 else:
                     self.add_ignored_code(self.vybrany_dodavatel_kod, kod)
                     products_to_remove.append(kod)
+                    codes_to_remove.append(kod)
                     skipped_or_ignored.append({"SivCode": kod, "Důvod": "nic nevybráno → ignorováno"})
 
             # Uložení červeně označených na disk (beze změn)
@@ -1306,7 +1391,7 @@ class ObrFormApp:
                     print(f"[WARN] Fallback openpyxl selhal: {e}")
                     self.write_repair_instructions(excel_path)
 
-            #messagebox.showinfo("Info", "Všechny vybrané produkty byly uloženy.")
+            # messagebox.showinfo("Info", "Všechny vybrané produkty byly uloženy.")
 
             for kod in products_to_remove:
                 if kod in self.produkt_widgety:
@@ -1321,6 +1406,11 @@ class ObrFormApp:
         finally:
             self.close_database()
             self.red_frame_images.clear()
+
+            # Odstranit kódy z dočasně ignorovaných
+            if codes_to_remove:
+                self.remove_ignored_temp_codes(self.vybrany_dodavatel_kod, codes_to_remove)
+
             if self.vybrany_dodavatel and self.vybrany_dodavatel_kod:
                 self.combo_selected(None)
             else:
@@ -1328,12 +1418,20 @@ class ObrFormApp:
 
     def zrusit_vse(self):
         """Zruší všechny produkty bez uložení."""
+        # Příprava seznamu kódů k odstranění z dočasných ignorovaných
+        codes_to_remove = []
         for kod in list(self.produkt_widgety.keys()):
+            codes_to_remove.append(kod)
             self.produkt_widgety[kod]['frame'].destroy()
             del self.produkt_widgety[kod]
             if kod in self.img_refs:
                 del self.img_refs[kod]
-        self.hide_overlay()  # Přidáno skrytí overlay
+
+        # Odstranit kódy z dočasně ignorovaných
+        if codes_to_remove:
+            self.remove_ignored_temp_codes(self.vybrany_dodavatel_kod, codes_to_remove)
+
+        self.hide_overlay()
         messagebox.showinfo("Info", "Všechny produkty byly zrušeny.")
 
     def close_database(self):
