@@ -23,6 +23,9 @@ from ShopScraper import octo_get_product_images, directdeal_get_product_images, 
 from ShopSelenium import fourcom_get_product_images, notebooksbilliger_get_product_images, komputronik_get_product_images, wave_get_product_images
 
 DODAVATELE = {
+    # Nová položka - Všechny dodavatele
+    "Všechny dodavatele": {"kod": "ALL", "produkt_dotaz_kod": "SivCode", "funkce": None, "paralelně": True},
+
     # klasickej scrape
     "octo it": {"kod": "348651", "produkt_dotaz_kod": "SivCode", "funkce": octo_get_product_images, "paralelně": True},
     "directdeal/everit": {"kod": "268493", "produkt_dotaz_kod": "SivCode", "funkce": directdeal_get_product_images, "paralelně": True},
@@ -641,7 +644,6 @@ class ObrFormApp:
         try:
             # Načíst dočasně ignorované kódy
             ignored_temp_codes = self.load_ignored_temp_codes()
-            ignored_temp_for_supplier = ignored_temp_codes.get(self.vybrany_dodavatel_kod, [])
 
             # Připojení k DB
             if not self.connect_to_database():
@@ -660,8 +662,20 @@ class ObrFormApp:
             produkt_dotaz_kod = supplier_info["produkt_dotaz_kod"]
 
             # Ignorované kódy (trvalé + dočasné)
-            ignored_codes = self.ignored_codes.get(self.vybrany_dodavatel_kod, [])
-            ignored_codes.extend(ignored_temp_for_supplier)  # Přidat dočasně ignorované
+            ignored_codes = []
+            if self.vybrany_dodavatel == "Všechny dodavatele":
+                # Pro všechny dodavatele načteme ignorované kódy od všech dodavatelů
+                for supplier_code in DODAVATELE.keys():
+                    if supplier_code != "Všechny dodavatele":
+                        ignored_codes.extend(self.ignored_codes.get(DODAVATELE[supplier_code]["kod"], []))
+                        ignored_codes.extend(ignored_temp_codes.get(DODAVATELE[supplier_code]["kod"], []))
+            else:
+                # Původní logika pro jednoho dodavatele
+                ignored_codes = self.ignored_codes.get(self.vybrany_dodavatel_kod, [])
+                ignored_codes.extend(ignored_temp_codes.get(self.vybrany_dodavatel_kod, []))
+
+            # Odstranění duplicit
+            ignored_codes = list(set(ignored_codes))
 
             # Přípravná tabulka
             self.cursor.execute("""
@@ -674,30 +688,58 @@ class ObrFormApp:
                 self.cursor.executemany("INSERT INTO #IgnoredCodes VALUES (?)",
                                         [(code,) for code in ignored_codes])
 
-            # SQL dotaz - přidáno SivCode2
-            query = f"""
-                SELECT TOP {self.buffer_size} 
-                    [{produkt_dotaz_kod}] AS SivCode, 
-                    SivName,
-                    SivCode2
-                FROM [{self.table_name}]
-                join StoItem with(nolock) on (SivStiId = StiId)
-                left join SCategory with(nolock) on (StiScaId = ScaId)
-                WHERE [{self.column_mapping['supplier']}] = ?
-                  AND SivOrdVen = 1
-                  AND not exists (Select top 1 1 from Attach with(nolock) where AttSrcId = StiId and AttPedId = 52 and (AttTag like 'sys-gal%' or AttTag = 'sys-enl' or AttTag = 'sys-thu'))
-                  AND StiPLPict is null
-                  AND ScaId not in (8843,8388,8553,8387,6263,8231,7575,5203,2830,269,1668,2391,1634,7209)
-                  AND ([{self.column_mapping['notes']}] IS NULL OR [{self.column_mapping['notes']}] = '')
-                  AND ([{self.column_mapping['pairing']}] IS NOT NULL AND [{self.column_mapping['pairing']}] <> '')
-                  AND StiHide = 0
-                  AND StiHideI = 0
-                  AND NOT EXISTS (
-                      SELECT 1 FROM #IgnoredCodes 
-                      WHERE SivCode = [{self.table_name}].[{produkt_dotaz_kod}] COLLATE DATABASE_DEFAULT
-                  ) ORDER BY NEWID()
-            """
-            params = [self.vybrany_dodavatel_kod]
+            # SQL dotaz - rozdílný pro "Všechny dodavatele"
+            if self.vybrany_dodavatel == "Všechny dodavatele":
+                query = f"""
+                            SELECT TOP {self.buffer_size} 
+                                SivCode, 
+                                SivName,
+                                SivCode2,
+                                SivComId  -- Přidáno SivComId
+                            FROM [{self.table_name}]
+                            join StoItem with(nolock) on (SivStiId = StiId)
+                            left join SCategory with(nolock) on (StiScaId = ScaId)
+                            WHERE SivOrdVen = 1
+                              AND not exists (Select top 1 1 from Attach with(nolock) where AttSrcId = StiId and AttPedId = 52 and (AttTag like 'sys-gal%' or AttTag = 'sys-thu' or AttTag = 'sys-enl'))
+                              AND StiPLPict is null
+                              AND ScaId not in (8843,8388,8553,8387,6263,8231,7575,5203,2830,269,1668,2391,1634,7209)
+                              AND (SivNotePic IS NULL OR SivNotePic = '')
+                              AND (SivStiId IS NOT NULL AND SivStiId <> '')
+                              AND StiHide = 0
+                              AND StiHideI = 0
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM #IgnoredCodes 
+                                  WHERE SivCode = [StoItemCom].[SivCode] COLLATE DATABASE_DEFAULT
+                              )
+                            ORDER BY NEWID()
+                        """
+                params = []
+            else:
+                # Původní dotaz pro jednoho dodavatele
+                query = f"""
+                            SELECT TOP {self.buffer_size} 
+                                [{produkt_dotaz_kod}] AS SivCode, 
+                                SivName,
+                                SivCode2,
+                                SivComId  -- Přidáno SivComId
+                            FROM [{self.table_name}]
+                            join StoItem with(nolock) on (SivStiId = StiId)
+                            left join SCategory with(nolock) on (StiScaId = ScaId)
+                            WHERE [{self.column_mapping['supplier']}] = ?
+                              AND SivOrdVen = 1
+                              AND not exists (Select top 1 1 from Attach with(nolock) where AttSrcId = StiId and AttPedId = 52 and (AttTag like 'sys-gal%' or AttTag = 'sys-thu' or AttTag = 'sys-enl'))
+                              AND StiPLPict is null
+                              AND ScaId not in (8843,8388,8553,8387,6263,8231,7575,5203,2830,269,1668,2391,1634,7209)
+                              AND ([{self.column_mapping['notes']}] IS NULL OR [{self.column_mapping['notes']}] = '')
+                              AND ([{self.column_mapping['pairing']}] IS NOT NULL AND [{self.column_mapping['pairing']}] <> '')
+                              AND StiHide = 0
+                              AND StiHideI = 0
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM #IgnoredCodes 
+                                  WHERE SivCode = [{self.table_name}].[{produkt_dotaz_kod}] COLLATE DATABASE_DEFAULT
+                              ) ORDER BY NEWID()
+                        """
+                params = [self.vybrany_dodavatel_kod]
 
             # --- VERBOSE VÝPIS PŘED DOTAZEM ---
             print("\n" + "=" * 80)
@@ -714,8 +756,15 @@ class ObrFormApp:
             # Provedení dotazu a převod do tabulky
             self.cursor.execute(query, params)
             rows = self.cursor.fetchall()
-            self.filtrovane_produkty = [{'SivCode': r.SivCode, 'SivName': r.SivName, 'SivCode2': r.SivCode2} for r in
-                                        rows]
+
+            if self.vybrany_dodavatel == "Všechny dodavatele":
+                self.filtrovane_produkty = [
+                    {'SivCode': r.SivCode, 'SivName': r.SivName, 'SivCode2': r.SivCode2, 'SivComId': r.SivComId} for r
+                    in rows]
+            else:
+                self.filtrovane_produkty = [
+                    {'SivCode': r.SivCode, 'SivName': r.SivName, 'SivCode2': r.SivCode2, 'SivComId': r.SivComId} for r
+                    in rows]
 
             df = pd.DataFrame(self.filtrovane_produkty, columns=["SivCode", "SivName", "SivCode2"])
             print(f"Počet načtených řádků: {len(df)} (ignorováno: {len(ignored_codes)})")
@@ -929,33 +978,53 @@ class ObrFormApp:
         return unique_images
 
     def load_product_images(self, produkt):
-        """Načte obrázky pro daný produkt ve worker vlákně.
-        Nevykresluje nic předem – UI se vytvoří až při prvním úspěšném obrázku.
-        """
+        """Načte obrázky pro daný produkt ve worker vlákně."""
         try:
             kod = produkt['SivCode']
             print(f"[THREAD] Načítám obrázky pro produkt: {kod}")
 
-            # Příprava úložiště pro originální obrázky (naplní se až v add_single_image)
+            # Příprava úložiště pro originální obrázky
             if kod not in self.original_images:
                 self.original_images[kod] = []
 
-            # 1) Získání URL obrázků z funkce pro zvoleného dodavatele (většinou async)
-            funkce_pro_dodavatele = self.vybrana_funkce
-            if not funkce_pro_dodavatele:
-                print(f"[CHYBA] Pro dodavatele {self.vybrany_dodavatel_kod} není definována funkce")
-                return
+            # 1) Získání URL obrázků
+            if self.vybrany_dodavatel == "Všechny dodavatele":
+                # Použijeme nový handler pro všechny dodavatele
+                from allSuppliersHandler import get_all_suppliers_product_images
 
-            urls = []
-            if asyncio.iscoroutinefunction(funkce_pro_dodavatele):
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    urls = loop.run_until_complete(funkce_pro_dodavatele(produkt['SivCode']))
-                finally:
-                    loop.close()
+                # ZMĚNA: Bezpečné získání SivComId s fallbackem
+                siv_com_id = produkt.get('SivComId', '')
+                produkt_info = {
+                    'SivCode': kod,
+                    'SivComId': siv_com_id
+                }
+
+                urls = []
+                if asyncio.iscoroutinefunction(get_all_suppliers_product_images):
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        urls = loop.run_until_complete(get_all_suppliers_product_images(produkt_info))
+                    finally:
+                        loop.close()
+                else:
+                    urls = get_all_suppliers_product_images(produkt_info)
             else:
-                urls = funkce_pro_dodavatele(produkt['SivCode'])
+                # Původní logika pro jednoho dodavatele
+                funkce_pro_dodavatele = self.vybrana_funkce
+                if not funkce_pro_dodavatele:
+                    print(f"[CHYBA] Pro dodavatele {self.vybrany_dodavatel_kod} není definována funkce")
+                    return
+
+                if asyncio.iscoroutinefunction(funkce_pro_dodavatele):
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        urls = loop.run_until_complete(funkce_pro_dodavatele(produkt['SivCode']))
+                    finally:
+                        loop.close()
+                else:
+                    urls = funkce_pro_dodavatele(produkt['SivCode'])
 
             # Normalizace návratu (povolíme tuple/dict, ale výsledkem má být list URL)
             if isinstance(urls, dict) and 'urls' in urls:
