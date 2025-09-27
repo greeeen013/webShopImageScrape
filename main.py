@@ -18,6 +18,14 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
 
+from queueScrapeDatabase import (
+    db_exists,
+    ensure_db,
+    diff_and_enqueue,
+    process_all_images,
+    fetch_click_batch,
+    mark_processed,
+)
 
 from ShopScraper import octo_get_product_images, directdeal_get_product_images, api_get_product_images, easynotebooks_get_product_images, kosatec_get_product_images, dcs_get_product_images, incomgroup_get_product_images, wortmann_get_product_images
 from ShopSelenium import fourcom_get_product_images, notebooksbilliger_get_product_images, komputronik_get_product_images, wave_get_product_images
@@ -456,6 +464,10 @@ class ObrFormApp:
                                       font=("Arial", 12), command=self.toggle_all)
         self.chk_all.pack(side=tk.LEFT, padx=20)
 
+        # tlačítko pro miniformu Fronta
+        tk.Button(top_frame, text="Přednačítání", font=("Arial", 12),
+                  command=self.open_queue_modal).pack(side=tk.LEFT, padx=5)
+
         # Canvas s scrollbarem
         self.canvas_frame = tk.Frame(self.root)
         self.canvas_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -485,6 +497,127 @@ class ObrFormApp:
                   font=("Arial", 14), height=2, width=15).pack(side=tk.LEFT, padx=20)
         tk.Button(btn_frame, text="Zrušit", command=self.zrusit_vse,
                   font=("Arial", 14), height=2, width=15).pack(side=tk.LEFT, padx=20)
+
+    def open_queue_modal(self):
+        """Mini okno pro volbu: Načítat / Odklikávat."""
+        win = tk.Toplevel(self.root)
+        win.title("Fronta (přednačítání/odklikávání)")
+        win.resizable(False, False)
+
+        tk.Label(win, text="Zvol akci:", font=("Arial", 13, "bold")).pack(padx=20, pady=(15, 10))
+
+        btns = tk.Frame(win)
+        btns.pack(padx=20, pady=(0, 15))
+
+        def _close():
+            try:
+                win.destroy()
+            except:
+                pass
+
+        tk.Button(btns, text="Načítat (přednačítání do SQLite)", width=28, height=2,
+                  command=lambda: [self.on_queue_prefetch(), _close()]).grid(row=0, column=0, padx=5)
+        tk.Button(btns, text="Odklikávat (z lokální DB)", width=28, height=2,
+                  command=lambda: [self.on_queue_clicking(), _close()]).grid(row=0, column=1, padx=5)
+
+    def on_queue_prefetch(self):
+        """
+        1) vytvoří/aktualizuje lokální SQLite frontu diffem vůči SQL,
+        2) spustí dlouhý scraping všech URL do fronty,
+        3) chybné kusy dá do ignoreSivCode.json (řeší modul),
+        4) po dokončení oznámí hotovo.
+        """
+        # UI overlay + loader
+        self.show_overlay()
+        self.loading_screen = LoadingScreen(self.root)
+        self.root.update()
+
+        def _worker():
+            try:
+                ensure_db()
+                # doplnit nové kusy z SQL (bez limitu)
+                diff_and_enqueue()
+                # plnit URL pro vše ve frontě
+                # supplier_code_for_ignore: ALL → necháme "ALL", takže se to do ignore přidá pod společný klíč
+                process_all_images(max_workers=5)  # změň číslo dle potřeby, nebo použij env: QUEUE_WORKERS
+                self.root.after(0, lambda: messagebox.showinfo("Fronta", "Přednačítání dokončeno. Můžeš přepnout na Odklikávat."))
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror("Chyba", f"Přednačítání selhalo:\n{e}"))
+            finally:
+                self.root.after(0, self.loading_screen.close)
+                self.root.after(0, self.hide_overlay)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def on_queue_clicking(self):
+        """
+        Načte z lokální DB dávku produktů podle comboboxu 'Počet produktů' a zobrazí je.
+        Pokud DB neexistuje, zobrazí chybu (požadavek).
+        """
+        if not db_exists():
+            messagebox.showerror("Chyba", "Lokální fronta (queue.sqlite3) ještě neexistuje. Nejdřív spusť 'Načítat'.")
+            return
+
+        # UI overlay + loader
+        self.show_overlay()
+        self.loading_screen = LoadingScreen(self.root)
+        self.root.update()
+
+        limit = self.buffer_size  # stejná logika jako původní TOP
+        def _worker():
+            try:
+                batch = fetch_click_batch(limit)
+                if not batch:
+                    self.root.after(0, lambda: messagebox.showinfo("Fronta", "Ve frontě není nic k odklikání."))
+                    return
+
+                # vyčistit GUI
+                self.root.after(0, self.clear_gui)
+                self.produkt_widgety = {}
+                self.produkt_check_vars = {}
+                self.image_check_vars = {}
+                self.img_refs = {}
+                self.all_check_var.set(False)
+
+                # načíst obrázky z lokálních cest a poslat do add_single_image
+                def _feed_items():
+                    import io, os
+                    for produkt in batch:
+                        urls = produkt.get("urls") or []
+                        paths = produkt.get("paths") or []
+                        # bezpečný pár URL↔PATH podle indexu
+                        for i, p in enumerate(paths):
+                            if not p or not os.path.exists(p):
+                                continue
+                            try:
+                                data = Path(p).read_bytes()
+                                url_for_ui = urls[i] if i < len(
+                                    urls) else p  # pro konzistenci UI předáme původní URL (pokud je)
+                                self.add_single_image(
+                                    {"SivCode": produkt["SivCode"], "SivName": produkt.get("SivName", ""),
+                                     "SivCode2": produkt.get("SivCode2", "")},
+                                    url_for_ui,
+                                    data
+                                )
+                            except Exception:
+                                continue
+                    # hotovo → povolit UI
+                    self.enable_ui_elements()
+                    try:
+                        self.loading_screen.close()
+                    except:
+                        pass
+                    self.hide_overlay()
+
+                self.root.after(0, _feed_items)
+            except Exception as e:
+                err = str(e)
+                self.root.after(0, lambda msg=err: messagebox.showerror("Chyba", f"Načtení z fronty selhalo:\n{msg}"))
+
+            finally:
+                    pass
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def schedule_scrollregion_update(self):
         """Plánuje aktualizaci scrollregionu pro plynulejší scrollování."""
@@ -1307,6 +1440,7 @@ class ObrFormApp:
 
         products_to_remove = []
         codes_to_remove = []  # Kódy, které budou odstraněny z dočasného ignorování
+        codes_to_mark = []  # NOVÉ: kódy, které po zápisu označíme v lokální DB jako zpracované
 
         # --- sběr informací pro přehlednou tabulku zápisu ---
         pending_updates = []  # pro tabulku „co se bude zapisovat“
@@ -1361,6 +1495,7 @@ class ObrFormApp:
                     self.cursor.execute(query, (zapis, produkt["SivCode"]))
                     products_to_remove.append(kod)
                     codes_to_remove.append(kod)
+                    codes_to_mark.append(kod)  # NOVÉ: označíme jako zpracované v lokální DB
                 else:
                     self.add_ignored_code(self.vybrany_dodavatel_kod, kod)
                     products_to_remove.append(kod)
@@ -1398,6 +1533,12 @@ class ObrFormApp:
             print("[DB WRITE] COMMIT OK")
             print("=" * 80 + "\n")
             # --- /VERBOSE ---
+
+            # NOVÉ: po úspěšném commitu označ v lokální frontě jako zpracované
+            try:
+                mark_processed(codes_to_mark)
+            except Exception as e:
+                print(f"[WARN] Lokální DB: mark_processed selhal: {e}")
 
             # Post-processing Excel (tvoje stávající logika beze změn)
             com_result = {"status": "skipped", "reason": "missing_pywin32_or_excel"}
