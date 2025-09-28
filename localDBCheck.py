@@ -1,4 +1,4 @@
-# sqlCheck.py
+# localDBCheck.py
 import os
 import sqlite3
 import json
@@ -53,7 +53,7 @@ def parse_json_list(raw):
     return []
 
 def main():
-    print("=== sqlCheck.py – dotaz na produkty ve frontě (queue.sqlite3) ===")
+    print("=== localDBCheck.py – dotaz na produkty ve frontě (queue.sqlite3) ===")
     siv = input("Zadej SivCode (můžeš použít * nebo % pro LIKE): ").strip()
 
     sql, params, used_like = normalize_pattern(siv)
