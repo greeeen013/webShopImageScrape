@@ -3,6 +3,19 @@ from bs4 import BeautifulSoup
 import asyncio
 import os
 from dotenv import load_dotenv
+import re
+
+def get_html(url):
+    """
+    Získá HTML kód z webové stránky
+    """
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # Zkontroluje, zda byl požadavek úspěšný
+        return response.text
+    except requests.exceptions.RequestException as e:
+        print(f"Chyba při načítání stránky: {e}")
+        return None
 
 async def octo_get_product_images(PNumber):
     # First stage - search page
@@ -721,7 +734,9 @@ async def axro_get_product_images(PNumber):
         print(f"[ERROR] Processing failed: {str(e)}")
         return []
 
+
 if __name__ == "__main__":
-    print(asyncio.run(incomgroup_get_product_images("UM.HV0EE.E13")))
+    print(get_html("https://www.michael-ag.de/shop/article/details/119149"))
+    #print(asyncio.run(incomgroup_get_product_images("UM.HV0EE.E13")))
     #print(asyncio.run(wortmann_get_product_images(5310021)))
     #print(asyncio.run(dcs_get_product_images(1002233635)))
