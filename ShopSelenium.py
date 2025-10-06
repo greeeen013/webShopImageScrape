@@ -678,7 +678,7 @@ async def michaelag_get_product_images(PNumber):
             logger.error(f"Product page for {PNumber} not loaded properly: {str(e)}")
             return []
 
-        # 3) VYLEPŠENÁ ČÁST PRO EXTRACTION OBRAZKŮ
+        # 3) VYLEPŠENÁ ČÁST PRO EXTRACTION OBRAZKŮ - FILTRACE POUZE OBRAZKŮ PRODUKTU
         try:
             # Čekáme na slick-track a pak ještě chvíli na načtení obrázků
             WebDriverWait(driver, 15).until(
@@ -736,7 +736,7 @@ async def michaelag_get_product_images(PNumber):
                     # Pokud nemáme srcset, zkusíme přímo src
                     if not srcset:
                         src = img.get_attribute("src") or img.get_attribute("data-src")
-                        if src and "/media/" in src:
+                        if src and "/media/" in src and str(PNumber) in src:
                             absolute_url = urljoin(base_url, src)
                             # Přidáme pouze pokud ještě nemáme
                             if absolute_url not in image_urls:
@@ -776,7 +776,7 @@ async def michaelag_get_product_images(PNumber):
                         if target_url:
                             logger.debug(f"Using largest available size ({best_size}w): {target_url}")
 
-                    if target_url:
+                    if target_url and str(PNumber) in target_url:
                         # Vytvoř absolutní URL
                         absolute_url = urljoin(base_url, target_url)
                         # Přidáme pouze pokud ještě nemáme
@@ -788,13 +788,13 @@ async def michaelag_get_product_images(PNumber):
                     logger.warning(f"Error processing image element: {str(e)}")
                     continue
 
-            # Pokud stále nemáme obrázky, zkusíme najít všechny img s media v src
+            # Pokud stále nemáme obrázky, zkusíme najít všechny img s media v src a filtrovat podle PNumber
             if not image_urls:
-                logger.debug("Trying fallback - looking for all images with /media/ in src")
+                logger.debug("Trying fallback - looking for all images with /media/ in src and PNumber")
                 all_media_imgs = driver.find_elements(By.CSS_SELECTOR, "img[src*='/media/']")
                 for img in all_media_imgs:
                     src = img.get_attribute("src")
-                    if src and "/media/" in src and "119149" in src:  # Filtrujeme podle čísla produktu
+                    if src and "/media/" in src and str(PNumber) in src:
                         absolute_url = urljoin(base_url, src)
                         if absolute_url not in image_urls:
                             image_urls.append(absolute_url)
