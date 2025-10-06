@@ -9,6 +9,7 @@ from selenium.webdriver.common.keys import Keys
 
 uc.Chrome.__del__ = lambda self: None
 
+import re
 import time
 import logging
 from selenium.webdriver.common.action_chains import ActionChains
@@ -309,7 +310,6 @@ async def komputronik_get_product_images(PNumber):
         except:
             pass
 
-
 async def wave_get_product_images(PNumber):
     import re
     import urllib.parse
@@ -500,11 +500,361 @@ async def wave_get_product_images(PNumber):
             pass
 
 
+async def michaelag_get_product_images(PNumber):
+    """
+    Získá obrázky produktů z webu Michael AG
+    """
+    driver = get_chrome_driver(headless=False)  # Pro debugování necháme viditelný
+    try:
+        load_dotenv()
+        username = os.getenv("MICHAELAG_USERNAME")
+        password = os.getenv("MICHAELAG_PASSWORD")
+
+        if not username or not password:
+            logger.error("Michael AG credentials not found in .env")
+            return []
+
+        # 1) Přihlášení (tato část funguje - zachováme ji)
+        login_url = "https://www.michael-ag.de/login"
+        logger.debug(f"Navigating to login page: {login_url}")
+        driver.get(login_url)
+
+        # Čekání na kompletní načtení stránky
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
+
+        # Počkáme déle a zkusíme různé selektory
+        time.sleep(3)
+
+        # Zkusíme najít formulářové prvky různými způsoby
+        selectors_to_try = [
+            "input#customerid",
+            "input[name='_username']",
+            "input[type='text']",
+            ".form-control[type='text']"
+        ]
+
+        username_field = None
+        for selector in selectors_to_try:
+            try:
+                username_field = WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                )
+                if username_field.is_displayed() and username_field.is_enabled():
+                    logger.debug(f"Found username field with selector: {selector}")
+                    break
+                else:
+                    username_field = None
+            except:
+                continue
+
+        if not username_field:
+            logger.error("Could not find username field with any selector")
+            return []
+
+        # Vyplníme username pomocí JavaScriptu
+        driver.execute_script("arguments[0].value = arguments[1];", username_field, username)
+        driver.execute_script("arguments[0].dispatchEvent(new Event('input', {bubbles: true}));", username_field)
+        logger.debug("Username set via JavaScript")
+
+        # Stejný postup pro password
+        password_selectors = [
+            "input#password",
+            "input[name='_password']",
+            "input[type='password']",
+            ".form-control[type='password']"
+        ]
+
+        password_field = None
+        for selector in password_selectors:
+            try:
+                password_field = WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                )
+                if password_field.is_displayed():
+                    logger.debug(f"Found password field with selector: {selector}")
+                    break
+                else:
+                    password_field = None
+            except:
+                continue
+
+        if not password_field:
+            logger.error("Could not find password field with any selector")
+            return []
+
+        # Vyplníme password pomocí JavaScriptu
+        driver.execute_script("arguments[0].value = arguments[1];", password_field, password)
+        driver.execute_script("arguments[0].dispatchEvent(new Event('input', {bubbles: true}));", password_field)
+        logger.debug("Password set via JavaScript")
+
+        # Klikneme na přihlášení pomocí JavaScriptu
+        login_selectors = [
+            "button#login-submit",
+            "button[type='submit']",
+            ".btn-success",
+            "input[type='submit']"
+        ]
+
+        login_button = None
+        for selector in login_selectors:
+            try:
+                login_button = WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                )
+                if login_button.is_displayed():
+                    logger.debug(f"Found login button with selector: {selector}")
+                    break
+                else:
+                    login_button = None
+            except:
+                continue
+
+        if login_button:
+            driver.execute_script("arguments[0].click();", login_button)
+            logger.debug("Login button clicked via JavaScript")
+        else:
+            # Pokud nenajdeme tlačítko, zkusíme odeslat formulář
+            form = driver.find_element(By.TAG_NAME, "form")
+            driver.execute_script("arguments[0].submit();", form)
+            logger.debug("Form submitted via JavaScript")
+
+        # Čekání na přihlášení - kontrolujeme změnu URL nebo dashboard
+        WebDriverWait(driver, 20).until(
+            lambda d: "login" not in d.current_url or d.find_elements(By.CSS_SELECTOR, ".dashboard, .account, .welcome")
+        )
+        logger.debug("Successfully logged in")
+
+        # 2) Navigace na stránku produktu
+        product_url = f"https://www.michael-ag.de/shop/article/details/{PNumber}"
+        logger.debug(f"Navigating to product page: {product_url}")
+        driver.get(product_url)
+
+        # VYLEPŠENÁ KONTROLA EXISTENCE PRODUKTU
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "body"))
+            )
+
+            # Kontrola specifických chybových stavů
+            error_indicators = [
+                "Seite nicht gefunden",
+                "Artikel nicht gefunden",
+                "Produkt nicht verfügbar",
+                "404 Error",
+                "nicht vorhanden"
+            ]
+
+            page_text = driver.page_source
+            page_lower = page_text.lower()
+
+            # Pokud najdeme specifické chybové hlášky
+            if any(indicator in page_text for indicator in error_indicators):
+                logger.error(f"Product {PNumber} not found on Michael AG - specific error message detected")
+                return []
+
+            # Kontrola zda máme hlavní obsah produktu
+            product_content_selectors = [
+                "div.slick-track",
+                ".mt-article-details",
+                "#article-data-main",
+                "h2",  # název produktu
+                ".mt-price"  # cena
+            ]
+
+            has_product_content = False
+            for selector in product_content_selectors:
+                if driver.find_elements(By.CSS_SELECTOR, selector):
+                    has_product_content = True
+                    logger.debug(f"Found product content with selector: {selector}")
+                    break
+
+            if not has_product_content:
+                logger.error(f"Product {PNumber} page doesn't contain expected product elements")
+                return []
+
+        except Exception as e:
+            logger.error(f"Product page for {PNumber} not loaded properly: {str(e)}")
+            return []
+
+        # 3) VYLEPŠENÁ ČÁST PRO EXTRACTION OBRAZKŮ
+        try:
+            # Čekáme na slick-track a pak ještě chvíli na načtení obrázků
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "div.slick-track"))
+            )
+
+            # Počkáme ještě moment na kompletní načtení
+            time.sleep(2)
+
+            # Scrollujeme trochu dolů, aby se načetly všechny lazy obrázky
+            driver.execute_script("window.scrollTo(0, 300);")
+            time.sleep(1)
+
+            # Hledáme všechny obrázky v slick-track - používáme širší selektor
+            image_selectors = [
+                "div.slick-track img.mt-article-image",
+                "div.slick-track img",
+                ".slick-slide img",
+                "img[data-srcset]",
+                "img[src*='/media/']"
+            ]
+
+            image_elements = []
+            for selector in image_selectors:
+                try:
+                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                    if elements:
+                        logger.debug(f"Found {len(elements)} elements with selector: {selector}")
+                        image_elements.extend(elements)
+                except Exception as e:
+                    logger.debug(f"Selector {selector} failed: {e}")
+                    continue
+
+            # Odstraníme duplicity
+            unique_elements = []
+            seen_ids = set()
+            for elem in image_elements:
+                elem_id = elem.id
+                if elem_id not in seen_ids:
+                    seen_ids.add(elem_id)
+                    unique_elements.append(elem)
+
+            logger.debug(f"Total unique image elements found: {len(unique_elements)}")
+
+            image_urls = []
+            base_url = "https://www.michael-ag.de"
+
+            for img in unique_elements:
+                try:
+                    # Získej srcset atribut - zkusíme různé atributy
+                    srcset = img.get_attribute("srcset")
+                    if not srcset:
+                        srcset = img.get_attribute("data-srcset")
+
+                    # Pokud nemáme srcset, zkusíme přímo src
+                    if not srcset:
+                        src = img.get_attribute("src") or img.get_attribute("data-src")
+                        if src and "/media/" in src:
+                            absolute_url = urljoin(base_url, src)
+                            # Přidáme pouze pokud ještě nemáme
+                            if absolute_url not in image_urls:
+                                image_urls.append(absolute_url)
+                                logger.debug(f"Found image via src: {absolute_url}")
+                        continue
+
+                    # Rozděl srcset na jednotlivé URL s deskriptory
+                    sources = [s.strip() for s in srcset.split(",") if s.strip()]
+
+                    # Najdi URL s 1170w
+                    target_url = None
+                    for source in sources:
+                        if "1170w" in source:
+                            parts = source.strip().split()
+                            if len(parts) >= 1:
+                                target_url = parts[0]
+                                logger.debug(f"Found 1170w source: {target_url}")
+                                break
+
+                    # Pokud nebylo nalezeno 1170w, vezmeme největší dostupnou velikost
+                    if not target_url and sources:
+                        best_size = 0
+                        for source in sources:
+                            parts = source.strip().split()
+                            if len(parts) >= 2:
+                                size_str = parts[1].lower()
+                                if size_str.endswith('w'):
+                                    try:
+                                        size = int(size_str[:-1])
+                                        if size > best_size:
+                                            best_size = size
+                                            target_url = parts[0]
+                                    except ValueError:
+                                        continue
+
+                        if target_url:
+                            logger.debug(f"Using largest available size ({best_size}w): {target_url}")
+
+                    if target_url:
+                        # Vytvoř absolutní URL
+                        absolute_url = urljoin(base_url, target_url)
+                        # Přidáme pouze pokud ještě nemáme
+                        if absolute_url not in image_urls:
+                            image_urls.append(absolute_url)
+                            logger.debug(f"Added image URL: {absolute_url}")
+
+                except Exception as e:
+                    logger.warning(f"Error processing image element: {str(e)}")
+                    continue
+
+            # Pokud stále nemáme obrázky, zkusíme najít všechny img s media v src
+            if not image_urls:
+                logger.debug("Trying fallback - looking for all images with /media/ in src")
+                all_media_imgs = driver.find_elements(By.CSS_SELECTOR, "img[src*='/media/']")
+                for img in all_media_imgs:
+                    src = img.get_attribute("src")
+                    if src and "/media/" in src and "119149" in src:  # Filtrujeme podle čísla produktu
+                        absolute_url = urljoin(base_url, src)
+                        if absolute_url not in image_urls:
+                            image_urls.append(absolute_url)
+                            logger.debug(f"Found via fallback: {absolute_url}")
+
+            logger.debug(f"Found {len(image_urls)} total images for product {PNumber}")
+
+            # Seřadíme obrázky podle čísla (pokud je v URL)
+            def get_image_number(url):
+                import re
+                match = re.search(r'(\d+)\.webp$', url)
+                return int(match.group(1)) if match else 0
+
+            image_urls.sort(key=get_image_number)
+
+            return image_urls
+
+        except Exception as e:
+            logger.error(f"Error finding images: {str(e)}")
+            # Uložíme debug informace
+            try:
+                html_content = driver.page_source
+                debug_filename = f"michaelag_images_debug_{PNumber}.html"
+                with open(debug_filename, "w", encoding="utf-8") as f:
+                    f.write(html_content)
+                logger.debug(f"Saved images debug HTML to {debug_filename}")
+            except:
+                pass
+            return []
+
+    except Exception as e:
+        logger.error(f"Error in michaelag_get_product_images: {str(e)}", exc_info=True)
+
+        # Uložení HTML pro debugování
+        try:
+            html_content = driver.page_source
+            debug_filename = f"michaelag_debug_{PNumber}.html"
+            with open(debug_filename, "w", encoding="utf-8") as f:
+                f.write(html_content)
+            logger.debug(f"Saved debug HTML to {debug_filename}")
+
+            # Také screenshot pro jistotu
+            driver.save_screenshot(f"michaelag_debug_{PNumber}.png")
+            logger.debug(f"Saved screenshot to michaelag_debug_{PNumber}.png")
+        except Exception as debug_error:
+            logger.error(f"Could not save debug files: {str(debug_error)}")
+
+        return []
+    finally:
+        try:
+            driver.quit()
+        except:
+            pass
 
 
 if __name__ == "__main__":
     import asyncio
-    print(asyncio.run(wave_get_product_images("100093375")))
+
+    print(asyncio.run(michaelag_get_product_images("119149")))
+    #print(asyncio.run(wave_get_product_images("100093375")))
     #print(asyncio.run(notebooksbilliger_get_product_images("A1064333")))
     #print(asyncio.run(komputronik_get_product_images("MOD-PHA-047")))
     #print(asyncio.run(fourcom_get_product_images("532754")))
