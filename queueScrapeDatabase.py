@@ -7,6 +7,7 @@ import requests
 import logging
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from constants import DODAVATELE, IGNORED_SUPPLIERS
 
 DB_PATH = "queue.sqlite3"
 IGNORE_FILE = "ignoreSivCode.json"
@@ -169,6 +170,7 @@ def fetch_all_missing_from_sqlserver():
               AND (StoItemCom.SivStiId IS NOT NULL AND StoItemCom.SivStiId <> '')
               AND StoItem.StiHide = 0
               AND StoItem.StiHideI = 0
+              AND SivComId in ({','.join([f"'{DODAVATELE[d]['kod']}'" for d in DODAVATELE if d != "Všechny dodavatele" and d not in IGNORED_SUPPLIERS])}) -- automaticky doplněné IDčka dodavatelů kromě ignorovaných
               AND NOT EXISTS (
                 SELECT 1 FROM #IgnoredCodes WHERE SivCode = [StoItemCom].[SivCode] COLLATE DATABASE_DEFAULT
               )
