@@ -26,31 +26,8 @@ from queueScrapeDatabase import (
     fetch_click_batch,
     mark_processed,
 )
+from constants import DODAVATELE
 
-from ShopScraper import octo_get_product_images, directdeal_get_product_images, api_get_product_images, easynotebooks_get_product_images, kosatec_get_product_images, dcs_get_product_images, incomgroup_get_product_images, wortmann_get_product_images
-from ShopSelenium import fourcom_get_product_images, notebooksbilliger_get_product_images, komputronik_get_product_images, wave_get_product_images
-
-DODAVATELE = {
-    # Nová položka - Všechny dodavatele
-    "Všechny dodavatele": {"kod": "ALL", "produkt_dotaz_kod": "SivCode", "funkce": None, "paralelně": True},
-
-    # klasickej scrape
-    "octo it": {"kod": "348651", "produkt_dotaz_kod": "SivCode", "funkce": octo_get_product_images, "paralelně": True},
-    "directdeal/everit": {"kod": "268493", "produkt_dotaz_kod": "SivCode", "funkce": directdeal_get_product_images, "paralelně": True},
-    "api": {"kod": "161784", "produkt_dotaz_kod": "SivCode", "funkce": api_get_product_images, "paralelně": True},
-    "NetFactory/easynotebooks": {"kod": "351191", "produkt_dotaz_kod": "SivCode", "funkce": easynotebooks_get_product_images, "paralelně": True},
-    "Kosatec": {"kod": "165463", "produkt_dotaz_kod": "SivCode", "funkce": kosatec_get_product_images, "paralelně": True},
-    "Dcs (nekvalitní)": {"kod": "319004", "produkt_dotaz_kod": "SivCode", "funkce": dcs_get_product_images, "paralelně": True},
-    "IncomGroup": {"kod": "169701", "produkt_dotaz_kod": "SivCode2", "funkce": incomgroup_get_product_images, "paralelně": True},
-    "Wortmann": {"kod": "190157", "produkt_dotaz_kod": "SivCode", "funkce": wortmann_get_product_images, "paralelně": True},
-
-
-    # selenium
-    "Wave (selenium)": {"kod": "115565", "produkt_dotaz_kod": "SivCode", "funkce": wave_get_product_images, "paralelně": False},
-    "notebooksbilliger (selenium)": {"kod": "340871", "produkt_dotaz_kod": "SivCode", "funkce": notebooksbilliger_get_product_images, "paralelně": False},
-    "fourcom (selenium)": {"kod": "312585", "produkt_dotaz_kod": "SivCode", "funkce": fourcom_get_product_images, "paralelně": False},
-    "Komputronik (selenium)": {"kod": "104584", "produkt_dotaz_kod": "SivCode", "funkce": komputronik_get_product_images, "paralelně": False},
-}
 
 # Slovní volby počtu produktů pro combobox
 POCTY_PRODUKTU = ["hodně málo", "málo", "středně", "hodně", "nejvíc"]
@@ -828,18 +805,19 @@ class ObrFormApp:
                                 SivCode, 
                                 SivName,
                                 SivCode2,
-                                SivComId  -- Přidáno SivComId
+                                SivComId
                             FROM [{self.table_name}]
                             join StoItem with(nolock) on (SivStiId = StiId)
                             left join SCategory with(nolock) on (StiScaId = ScaId)
                             WHERE SivOrdVen = 1
                               AND not exists (Select top 1 1 from Attach with(nolock) where AttSrcId = StiId and AttPedId = 52 and (AttTag like 'sys-gal%' or AttTag = 'sys-thu' or AttTag = 'sys-enl'))
-                              AND StiPLPict is null
+                              AND StiPLPict is null --TODO zkonrolovat co je tohle zac
                               AND ScaId not in (8843,8388,8553,8387,6263,8231,7575,5203,2830,269,1668,2391,1634,7209)
                               AND (SivNotePic IS NULL OR SivNotePic = '')
                               AND (SivStiId IS NOT NULL AND SivStiId <> '')
                               AND StiHide = 0
                               AND StiHideI = 0
+                              AND SivComId in ({','.join([f"'{DODAVATELE[d]['kod']}'" for d in DODAVATELE if d != "Všechny dodavatele"])}) -- automaticky doplněné IDčka dodavatelů
                               AND NOT EXISTS (
                                   SELECT 1 FROM #IgnoredCodes 
                                   WHERE SivCode = [StoItemCom].[SivCode] COLLATE DATABASE_DEFAULT
@@ -1246,7 +1224,7 @@ class ObrFormApp:
         frame_produkt.grid_columnconfigure(0, weight=1)
 
         # Vytvoření klikatelného labelu s textem pro kopírování
-        label_text = f"{kod} - {nazev} - {kod2}"
+        label_text = f"{kod} - {nazev} - {kod2} - {produkt.get('SivComId', self.vybrany_dodavatel)}"
         label_nazev = tk.Label(
             frame_produkt,
             text=label_text,
