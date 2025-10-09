@@ -3,19 +3,25 @@ from ShopScraper import *
 from ShopSelenium import *
 from constants import DODAVATELE, IGNORED_SUPPLIERS
 
-# Seznam dodavatelů, kteří se mají ignorovat v režimu "Všechny dodavatele"
-
-
 
 async def get_all_suppliers_product_images(produkt_info):
     """
     Získá obrázky produktu od všech dostupných dodavatelů
     """
     siv_code = produkt_info['SivCode']
-    siv_com_id = produkt_info.get('SivComId', '')  # ZMĚNA: Bezpečné získání SivComId
+    siv_com_id = produkt_info.get('SivComId', '')
 
-    # Mapování kódů dodavatelů na funkce
-    supplier_functions = {dodavatel["code"]: dodavatel["function"] for dodavatel in DODAVATELE if dodavatel["code"] not in IGNORED_SUPPLIERS}
+    # Mapování kódů dodavatelů na funkce - správně iterujeme přes hodnoty slovníku
+    supplier_functions = {}
+    for dodavatel_info in DODAVATELE.values():
+        kod = dodavatel_info["kod"]
+        if kod in IGNORED_SUPPLIERS:
+            continue
+        funkce = dodavatel_info["funkce"]
+
+        # DŮLEŽITÉ: Přidáme pouze platné funkce
+        if funkce is not None:
+            supplier_functions[kod] = funkce
 
     # Pokud má produkt přiřazeného konkrétního dodavatele, použijeme pouze jeho funkci
     if siv_com_id and siv_com_id in supplier_functions and siv_com_id not in IGNORED_SUPPLIERS:
@@ -33,6 +39,11 @@ async def get_all_suppliers_product_images(produkt_info):
     all_urls = []
     for supplier_code, funkce in supplier_functions.items():
         if supplier_code in IGNORED_SUPPLIERS:
+            continue
+
+        # DŮLEŽITÉ: Ověříme, že funkce existuje před voláním
+        if funkce is None:
+            print(f"[INFO] Dodavatel {supplier_code} nemá definovanou funkci")
             continue
 
         try:
