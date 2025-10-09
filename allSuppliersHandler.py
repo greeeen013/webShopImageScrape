@@ -1,9 +1,10 @@
 import asyncio
 from ShopScraper import *
 from ShopSelenium import *
+from constants import DODAVATELE, IGNORED_SUPPLIERS
 
 # Seznam dodavatelů, kteří se mají ignorovat v režimu "Všechny dodavatele"
-IGNORED_SUPPLIERS = ["319004"]  # DCS (nekvalitní obrázky)
+
 
 
 async def get_all_suppliers_product_images(produkt_info):
@@ -14,20 +15,7 @@ async def get_all_suppliers_product_images(produkt_info):
     siv_com_id = produkt_info.get('SivComId', '')  # ZMĚNA: Bezpečné získání SivComId
 
     # Mapování kódů dodavatelů na funkce
-    supplier_functions = {
-        "348651": octo_get_product_images,  # octo it
-        "268493": directdeal_get_product_images,  # directdeal/everit
-        "161784": api_get_product_images,  # api
-        "351191": easynotebooks_get_product_images,  # NetFactory/easynotebooks
-        "165463": kosatec_get_product_images,  # Kosatec
-        "319004": dcs_get_product_images,  # Dcs (nekvalitní) - bude ignorován
-        "169701": incomgroup_get_product_images,  # IncomGroup
-        "190157": wortmann_get_product_images,  # Wortmann
-        "115565": wave_get_product_images,  # Wave (selenium)
-        "340871": notebooksbilliger_get_product_images,  # notebooksbilliger (selenium)
-        "312585": fourcom_get_product_images,  # fourcom (selenium)
-        "104584": komputronik_get_product_images,  # Komputronik (selenium)
-    }
+    supplier_functions = {dodavatel["code"]: dodavatel["function"] for dodavatel in DODAVATELE if dodavatel["code"] not in IGNORED_SUPPLIERS}
 
     # Pokud má produkt přiřazeného konkrétního dodavatele, použijeme pouze jeho funkci
     if siv_com_id and siv_com_id in supplier_functions and siv_com_id not in IGNORED_SUPPLIERS:
