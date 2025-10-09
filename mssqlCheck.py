@@ -43,14 +43,14 @@ def build_query(user_input: str):
     if "*" in s or "%" in s:
         s = s.replace("*", "%")
         sql = (
-            "SELECT SivCode, SivName, SivNotePic "
+            "SELECT SivCode, SivName, SivNotePic, SivComId "
             f"FROM [{os.getenv('DB_TABLE')}] WITH (NOLOCK) "
             "WHERE SivCode LIKE ?"
         )
         return sql, (s,), True
     else:
         sql = (
-            "SELECT SivCode, SivName, SivNotePic "
+            "SELECT SivCode, SivName, SivNotePic, SivComId "
             f"FROM [{os.getenv('DB_TABLE')}] WITH (NOLOCK) "
             "WHERE SivCode = ?"
         )
@@ -116,10 +116,12 @@ def main():
         sivcode   = getattr(r, "SivCode", None)
         sivname   = getattr(r, "SivName", None)
         notespic  = getattr(r, "SivNotePic", None)
+        sivcomid  = getattr(r, "SivComId", None)  # Nový sloupec
         urls = parse_urls_from_notes(notespic)
 
         print(f"[{i}] SivCode : {sivcode}")
         print(f"    SivName : {sivname or ''}")
+        print(f"    SivComId: {sivcomid or ''}")  # Výpis nového sloupce
         if urls:
             print("    URL:")
             for u in urls:
