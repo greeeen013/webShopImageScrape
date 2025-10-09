@@ -1206,6 +1206,13 @@ class ObrFormApp:
         except Exception as e:
             print(f"[CHYBA] Při načítání obrázků: {e}")
 
+    def get_dodavatel_name_by_kod(self, kod):
+        """Vrátí název dodavatele podle kódu a vypíše debug info"""
+        for nazev, info in DODAVATELE.items():
+            if str(info["kod"]) == str(kod):
+                return nazev
+        return kod  # fallback - vrátí kód, pokud název není nalezen
+
     def display_product_with_images(self, produkt):
         """Zobrazí základní informace o produktu."""
         kod = produkt['SivCode']
@@ -1224,7 +1231,8 @@ class ObrFormApp:
         frame_produkt.grid_columnconfigure(0, weight=1)
 
         # Vytvoření klikatelného labelu s textem pro kopírování
-        label_text = f"{kod} - {nazev} - {kod2} - {produkt.get('SivComId', self.vybrany_dodavatel)}"
+        get_dodavatel_name_by_kod = self.get_dodavatel_name_by_kod(produkt.get('SivComId', ''))
+        label_text = f"{kod} - {nazev} - {kod2} - {get_dodavatel_name_by_kod}"
         label_nazev = tk.Label(
             frame_produkt,
             text=label_text,
