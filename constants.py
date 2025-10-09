@@ -22,7 +22,7 @@ DODAVATELE = {
     "notebooksbilliger (selenium)": {"kod": "340871", "produkt_dotaz_kod": "SivCode", "funkce": notebooksbilliger_get_product_images, "paralelně": False},
     "fourcom (selenium)": {"kod": "312585", "produkt_dotaz_kod": "SivCode", "funkce": fourcom_get_product_images, "paralelně": False},
     "Komputronik (selenium)": {"kod": "104584", "produkt_dotaz_kod": "SivCode", "funkce": komputronik_get_product_images, "paralelně": False},
-    "MICHAELTELECOM AG (selenium)": {"kod": "318724", "produkt_dotaz_kod": "SivCode", "funkce": michaelag_get_product_images, "paralelně": True},
+    "MICHAELTELECOM AG (selenium)": {"kod": "318724", "produkt_dotaz_kod": "SivCode", "funkce": michaelag_get_product_images, "paralelně": False},
 }
 
 IGNORED_SUPPLIERS = ["319004"]
