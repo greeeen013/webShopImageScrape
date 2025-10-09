@@ -504,7 +504,7 @@ async def michaelag_get_product_images(PNumber):
     """
     Získá obrázky produktů z webu Michael AG
     """
-    driver = get_chrome_driver(headless=False)  # Pro debugování necháme viditelný
+    driver = get_chrome_driver()
     try:
         load_dotenv()
         username = os.getenv("MICHAELAG_USERNAME")
