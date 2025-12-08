@@ -28,7 +28,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def get_chrome_driver(headless=True):
+def get_chrome_driver(headless=False):
     """Vytvoří Chrome driver s automatickou detekcí verze Chrome"""
     chrome_options = uc.ChromeOptions()
     chrome_options.page_load_strategy = "eager"
