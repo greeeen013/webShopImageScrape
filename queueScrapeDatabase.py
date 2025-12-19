@@ -165,7 +165,7 @@ def fetch_all_missing_from_sqlserver():
                 WHERE AttSrcId = StiId AND AttPedId = 52 AND (AttTag like 'sys-gal%' OR AttTag = 'sys-thu' OR AttTag = 'sys-enl')
               )
               AND StoItem.StiPLPict IS NULL
-              AND SCategory.ScaId NOT IN (8843,8388,8553,8387,6263,8231,7575,5203,2830,269,1668,2391,1634,7209)
+              AND SCategory.ScaId NOT IN (8843,8388,8553,8387,6263,8231,7575,5203,2830,269,1668,2391,1634,7209,7150,7848)
               AND (StoItemCom.SivNotePic IS NULL OR StoItemCom.SivNotePic = '')
               AND (StoItemCom.SivStiId IS NOT NULL AND StoItemCom.SivStiId <> '')
               AND StoItem.StiHide = 0
@@ -337,6 +337,8 @@ def fetch_click_batch(limit:int):
     ensure_db()
     conn = _open()
     out = []
+    ignore_map = _load_ignore()  # načti ignoreSivCode.json
+    ignored_codes = {code for arr in ignore_map.values() for code in arr}
     try:
         cur = conn.cursor()
         cur.execute("""
@@ -347,7 +349,12 @@ def fetch_click_batch(limit:int):
               AND image_paths IS NOT NULL AND image_paths <> '[]'
             LIMIT ?
         """, (limit,))
+        codes_to_mark = []
         for r in cur.fetchall():
+            siv = r[0]
+            if siv in ignored_codes:
+                codes_to_mark.append(siv)  # volitelné – orazítkuj i v DB
+                continue  # přeskoč zobrazování
             try:
                 urls = json.loads(r[4] or "[]")
             except Exception:
@@ -364,6 +371,12 @@ def fetch_click_batch(limit:int):
                 "urls": urls,
                 "paths": paths
             })
+
+        if codes_to_mark:
+            try:
+                mark_ignored(codes_to_mark)
+            except Exception:
+                pass
     finally:
         conn.close()
     return out
@@ -381,3 +394,17 @@ def mark_processed(codes:list[str]):
         conn.commit()
     finally:
         conn.close()
+
+def mark_ignored(codes: list[str]):
+    if not codes:
+        return
+    conn = _open()
+    try:
+        cur = conn.cursor()
+        cur.execute("BEGIN")
+        for c in codes:
+            cur.execute("UPDATE queue SET ignorovat=1 WHERE SivCode=?", (c,))
+        conn.commit()
+    finally:
+        conn.close()
+

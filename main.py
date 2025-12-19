@@ -25,6 +25,7 @@ from queueScrapeDatabase import (
     process_all_images,
     fetch_click_batch,
     mark_processed,
+    mark_ignored
 )
 from constants import DODAVATELE
 
@@ -222,7 +223,13 @@ class ObrFormApp:
     def save_image_to_disk(self, image_data, supplier_code, siv_code, index):
         """Uloží obrázek na disk a přidá jeho hash"""
         try:
-            supplier_dir = os.path.join(IMG_DIR, supplier_code)
+            if not supplier_code:
+                supplier_code = "unknown_supplier"
+
+            if not IMG_DIR:
+                raise ValueError("IMG_DIR není definováno nebo je None")
+
+            supplier_dir = os.path.join(IMG_DIR, str(supplier_code))
             os.makedirs(supplier_dir, exist_ok=True)
 
             # Vytvořit unikátní název souboru
@@ -812,7 +819,7 @@ class ObrFormApp:
                             WHERE SivOrdVen = 1
                               AND not exists (Select top 1 1 from Attach with(nolock) where AttSrcId = StiId and AttPedId = 52 and (AttTag like 'sys-gal%' or AttTag = 'sys-thu' or AttTag = 'sys-enl'))
                               AND StiPLPict is null --TODO zkonrolovat co je tohle zac
-                              AND ScaId not in (8843,8388,8553,8387,6263,8231,7575,5203,2830,269,1668,2391,1634,7209)
+                              AND ScaId not in (8843,8388,8553,8387,6263,8231,7575,5203,2830,269,1668,2391,1634,7209,7150,7848)
                               AND (SivNotePic IS NULL OR SivNotePic = '')
                               AND (SivStiId IS NOT NULL AND SivStiId <> '')
                               AND StiHide = 0
@@ -840,7 +847,7 @@ class ObrFormApp:
                               AND SivOrdVen = 1
                               AND not exists (Select top 1 1 from Attach with(nolock) where AttSrcId = StiId and AttPedId = 52 and (AttTag like 'sys-gal%' or AttTag = 'sys-thu' or AttTag = 'sys-enl'))
                               AND StiPLPict is null
-                              AND ScaId not in (8843,8388,8553,8387,6263,8231,7575,5203,2830,269,1668,2391,1634,7209)
+                              AND ScaId not in (8843,8388,8553,8387,6263,8231,7575,5203,2830,269,1668,2391,1634,7209,7150,7848)
                               AND ([{self.column_mapping['notes']}] IS NULL OR [{self.column_mapping['notes']}] = '')
                               AND ([{self.column_mapping['pairing']}] IS NOT NULL AND [{self.column_mapping['pairing']}] <> '')
                               AND StiHide = 0

@@ -501,9 +501,7 @@ async def wave_get_product_images(PNumber):
 
 
 async def michaelag_get_product_images(PNumber):
-    """
-    Získá obrázky produktů z webu Michael AG
-    """
+    """ Získá obrázky produktů z webu Michael AG """
     driver = get_chrome_driver()
     try:
         load_dotenv()
@@ -551,6 +549,12 @@ async def michaelag_get_product_images(PNumber):
 
         if not username_field:
             logger.error("Could not find username field with any selector")
+            # Uložení screenshotu při chybě
+            try:
+                driver.save_screenshot("michael_error.png")
+                logger.debug("Saved error screenshot to michael_error.png")
+            except:
+                pass
             return []
 
         # Vyplníme username pomocí JavaScriptu
@@ -582,6 +586,12 @@ async def michaelag_get_product_images(PNumber):
 
         if not password_field:
             logger.error("Could not find password field with any selector")
+            # Uložení screenshotu při chybě
+            try:
+                driver.save_screenshot("michael_error.png")
+                logger.debug("Saved error screenshot to michael_error.png")
+            except:
+                pass
             return []
 
         # Vyplníme password pomocí JavaScriptu
@@ -772,7 +782,6 @@ async def michaelag_get_product_images(PNumber):
                                             target_url = parts[0]
                                     except ValueError:
                                         continue
-
                         if target_url:
                             logger.debug(f"Using largest available size ({best_size}w): {target_url}")
 
@@ -809,40 +818,28 @@ async def michaelag_get_product_images(PNumber):
                 return int(match.group(1)) if match else 0
 
             image_urls.sort(key=get_image_number)
-
             return image_urls
 
         except Exception as e:
             logger.error(f"Error finding images: {str(e)}")
-            # Uložíme debug informace
+            # Uložení screenshotu při chybě
             try:
-                html_content = driver.page_source
-                debug_filename = f"michaelag_images_debug_{PNumber}.html"
-                with open(debug_filename, "w", encoding="utf-8") as f:
-                    f.write(html_content)
-                logger.debug(f"Saved images debug HTML to {debug_filename}")
+                driver.save_screenshot("michael_error.png")
+                logger.debug("Saved error screenshot to michael_error.png")
             except:
                 pass
             return []
 
     except Exception as e:
         logger.error(f"Error in michaelag_get_product_images: {str(e)}", exc_info=True)
-
-        # Uložení HTML pro debugování
+        # Uložení screenshotu při chybě
         try:
-            html_content = driver.page_source
-            debug_filename = f"michaelag_debug_{PNumber}.html"
-            with open(debug_filename, "w", encoding="utf-8") as f:
-                f.write(html_content)
-            logger.debug(f"Saved debug HTML to {debug_filename}")
-
-            # Také screenshot pro jistotu
-            driver.save_screenshot(f"michaelag_debug_{PNumber}.png")
-            logger.debug(f"Saved screenshot to michaelag_debug_{PNumber}.png")
+            driver.save_screenshot("michael_error.png")
+            logger.debug("Saved error screenshot to michael_error.png")
         except Exception as debug_error:
-            logger.error(f"Could not save debug files: {str(debug_error)}")
-
+            logger.error(f"Could not save error screenshot: {str(debug_error)}")
         return []
+
     finally:
         try:
             driver.quit()
