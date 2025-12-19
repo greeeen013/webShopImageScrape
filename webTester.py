@@ -19,6 +19,9 @@ def test_multiple_urls(urls):
 # --- PŘÍKLAD POUŽITÍ ---
 if __name__ == "__main__":
     urls_to_test = [
+        "https://www.michael-ag.de",
+        "https://www.axro.com/en",
+        "https://www.wave-distribution.de",
         "https://www.alza.cz/pameti/18842853.htm",
         "https://smicro.cz/pameti-ram",
         "https://shop.api.de/search/352959",
