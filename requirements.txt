@@ -1,0 +1,9 @@
+playwright
+selenium
+requests
+pillow
+imagehash
+pyodbc
+python-dotenv
+sv_ttk
+openpyxl
