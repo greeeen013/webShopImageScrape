@@ -10,8 +10,36 @@ from dotenv import load_dotenv
 from .base_scraper import BaseScraper
 import time
 from threading import Lock
+import winreg
 
 DRIVER_LOCK = Lock()
+
+def _get_chrome_version():
+    """Attempts to get the installed Chrome version from Windows Registry."""
+    try:
+        # Try current user registry first (cleaner mostly)
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Google\Chrome\BLBeacon")
+        version, _ = winreg.QueryValueEx(key, "version")
+        return int(version.split('.')[0])
+    except:
+        pass
+        
+    try:
+        # Try local machine
+        # 64-bit Windows usually has Chrome in WOW6432Node if 32-bit, or direct if 64-bit app.
+        # But commonly registered here:
+        path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"
+        # Can't easily get version from App Path value (path to exe).
+        # Better: Clients\StartMenuInternet\Google Chrome\Capabilities
+        
+        # Simpler: just default to None if failed, but user said 143.
+        # Let's try to return None if strictly not found, but we can try one more key.
+        # HKEY_LOCAL_MACHINE\SOFTWARE\Wow6432Node\Google\Update\Clients\{8A69D345-D564-463c-AFF1-A69D9E530F96}
+        pass
+    except:
+        pass
+        
+    return None
 
 def get_chrome_driver(headless=False):
     options = uc.ChromeOptions()
@@ -21,8 +49,13 @@ def get_chrome_driver(headless=False):
     if headless:
         options.add_argument("--headless=new")
     
+    version_main = _get_chrome_version()
+    
     with DRIVER_LOCK:
-        driver = uc.Chrome(options=options, use_subprocess=True)
+        if version_main:
+            driver = uc.Chrome(options=options, use_subprocess=True, version_main=version_main)
+        else:
+            driver = uc.Chrome(options=options, use_subprocess=True)
     return driver
 
 class NotebooksbilligerScraper(BaseScraper):

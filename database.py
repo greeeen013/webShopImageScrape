@@ -94,7 +94,7 @@ class DatabaseManager:
                 WHERE AttSrcId = StiId AND AttPedId = 52 AND (AttTag like 'sys-gal%' OR AttTag = 'sys-thu' OR AttTag = 'sys-enl')
               )
               AND StoItem.StiPLPict IS NULL
-              AND SCategory.ScaId NOT IN (8843,8388,8553,8387,6263,8231,7575,5203,2830,269,1668,2391,1634,7209,7150,7848)
+              AND SCategory.ScaId NOT IN (8843,8388,8553,8387,6263,8231,7575,5203,2830,269,1668,2391,1634,7209,7150,7848,363)
               AND (StoItemCom.SivNotePic IS NULL OR StoItemCom.SivNotePic = '')
               AND (StoItemCom.SivStiId IS NOT NULL AND StoItemCom.SivStiId <> '')
               AND StoItem.StiHide = 0
@@ -147,11 +147,19 @@ class DatabaseManager:
         conn.close()
         return count
 
-    def get_pending_tasks(self, limit=100):
+    def get_pending_tasks(self, limit=None):
         """Get items that need scraping."""
         conn = self.get_queue_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM queue WHERE status='pending' AND ignored=0 LIMIT ?", (limit,))
+        
+        query = "SELECT * FROM queue WHERE status='pending' AND ignored=0"
+        params = []
+        
+        if limit is not None:
+             query += " LIMIT ?"
+             params.append(limit)
+             
+        cursor.execute(query, tuple(params))
         tasks = [dict(row) for row in cursor.fetchall()]
         conn.close()
         return tasks

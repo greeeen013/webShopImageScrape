@@ -6,7 +6,7 @@ from .base_scraper import BaseScraper
 from urllib.parse import urljoin
 
 class ComLineScraper(BaseScraper):
-    def get_product_images(self, product_code: str) -> list[str]:
+    def get_product_images(self, product_code: str, driver=None) -> list[str]:
         load_dotenv()
         email = os.getenv("COMLINE_EMAIL")
         password = os.getenv("COMLINE_PASSWORD")
@@ -48,7 +48,7 @@ class ComLineScraper(BaseScraper):
                 browser.close()
 
 class CyberportScraper(BaseScraper):
-    def get_product_images(self, product_code: str) -> list[str]:
+    def get_product_images(self, product_code: str, driver=None) -> list[str]:
         # TODO: Implement Cyberport scraper. ID 177521.
         # User did not provide explicit logic, only ID.
         # Assuming Playwright needed.

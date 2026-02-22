@@ -11,7 +11,7 @@ HEADERS = {
 }
 
 class OctoScraper(BaseScraper):
-    def get_product_images(self, product_code: str) -> list[str]:
+    def get_product_images(self, product_code: str, driver=None) -> list[str]:
         search_url = f"https://www.octo24.com/result.php?keywords={product_code}"
         try:
             response = requests.get(search_url, headers=HEADERS, timeout=10)
@@ -51,7 +51,7 @@ class OctoScraper(BaseScraper):
             return []
 
 class DirectDealScraper(BaseScraper):
-    def get_product_images(self, product_code: str) -> list[str]:
+    def get_product_images(self, product_code: str, driver=None) -> list[str]:
         url = f"https://directdeal.me/search?search={product_code}"
         try:
             headers = HEADERS.copy()
@@ -83,7 +83,7 @@ class DirectDealScraper(BaseScraper):
             return []
 
 class ApiScraper(BaseScraper):
-    def get_product_images(self, product_code: str) -> list[str]:
+    def get_product_images(self, product_code: str, driver=None) -> list[str]:
         url = f"https://shop.api.de/product/details/{product_code}"
         try:
             response = requests.get(url, headers=HEADERS, timeout=10)
@@ -102,7 +102,7 @@ class ApiScraper(BaseScraper):
             return []
 
 class EasyNotebooksScraper(BaseScraper):
-    def get_product_images(self, product_code: str) -> list[str]:
+    def get_product_images(self, product_code: str, driver=None) -> list[str]:
         url = f"https://www.easynotebooks.de/search?sSearch={product_code}"
         try:
             response = requests.get(url, headers=HEADERS, timeout=10)
@@ -116,7 +116,7 @@ class EasyNotebooksScraper(BaseScraper):
             return []
 
 class KosatecScraper(BaseScraper):
-    def get_product_images(self, product_code: str) -> list[str]:
+    def get_product_images(self, product_code: str, driver=None) -> list[str]:
         search_url = f"https://shop.kosatec.de/factfinder/result?query={product_code}"
         try:
             response = requests.get(search_url, headers=HEADERS, timeout=10)
@@ -148,7 +148,7 @@ class KosatecScraper(BaseScraper):
             return []
 
 class DcsScraper(BaseScraper):
-    def get_product_images(self, product_code: str) -> list[str]:
+    def get_product_images(self, product_code: str, driver=None) -> list[str]:
         load_dotenv()
         username = os.getenv('DCS_USERNAME')
         password = os.getenv('DCS_PASSWORD')
@@ -191,7 +191,7 @@ class DcsScraper(BaseScraper):
             return []
 
 class IncomGroupScraper(BaseScraper):
-    def get_product_images(self, product_code: str) -> list[str]:
+    def get_product_images(self, product_code: str, driver=None) -> list[str]:
         search_url = f"https://www.incomgroup.pl/?s={product_code}&post_type=produkt"
         try:
             response = requests.get(search_url, headers=HEADERS, timeout=10)
@@ -229,7 +229,7 @@ class IncomGroupScraper(BaseScraper):
             return []
 
 class WortmannScraper(BaseScraper):
-    def get_product_images(self, product_code: str) -> list[str]:
+    def get_product_images(self, product_code: str, driver=None) -> list[str]:
         search_url = f"https://www.wortmann.de/de-de/search.aspx?q={product_code}"
         base_url = "https://www.wortmann.de/de-de"
         try:
@@ -260,7 +260,7 @@ class WortmannScraper(BaseScraper):
             return []
 
 class AxroScraper(BaseScraper):
-    def get_product_images(self, product_code: str) -> list[str]:
+    def get_product_images(self, product_code: str, driver=None) -> list[str]:
         search_url = f"https://www.axro.com/en/search?search={product_code}"
         try:
             response = requests.get(search_url, headers=HEADERS, timeout=10)

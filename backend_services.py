@@ -132,6 +132,13 @@ class PreloaderService:
                         
                         self.db.update_task_results(item['SivCode'], urls, [])
                         
+                        # Logging
+                        siv_name = item.get('SivName', 'Unknown')
+                        if urls:
+                            print(f"OK: {siv_name} ({item['SivCode']}) - Found {len(urls)} images.")
+                        else:
+                            print(f"FAIL: {siv_name} ({item['SivCode']}) - No images found.")
+                        
                         # Update progress
                         # Lock for counter safety? Python ints are atomic-ish but better safe.
                         # Simple non-locked increment usually fine for progress bar only.
@@ -140,7 +147,7 @@ class PreloaderService:
                             self.progress_callback(completed, total)
                             
                     except Exception as e:
-                        print(f"Worker Error: {e}")
+                        print(f"Worker Error for {item.get('SivCode')}: {e}")
                     finally:
                         task_queue.task_done()
                         
@@ -148,12 +155,18 @@ class PreloaderService:
                 print(f"Worker Init Error: {e}")
             finally:
                 if driver:
-                    try: driver.quit()
-                    except: pass
+                    try:
+                         # UC cleanup can be noisy
+                         driver.quit()
+                    except Exception: 
+                         # Often raises OSError: [WinError 6] The handle is invalid if process already dead
+                         pass
+                    except OSError:
+                         pass
 
         # Start Workers
         threads = []
-        num_workers = 5 # config?
+        num_workers = 10 # increased for speed
         for _ in range(num_workers):
             t = threading.Thread(target=worker, daemon=True)
             t.start()

@@ -89,8 +89,10 @@ class ImageCard(tk.Frame):
         self.selected.set(False)
 
 
+import webbrowser
+
 class ProductFrame(tk.LabelFrame):
-    def __init__(self, parent, product_data, image_urls, review_service, on_product_update, on_empty=None):
+    def __init__(self, parent, product_data, image_urls, review_service, on_product_update, on_empty=None, search_url=None):
         super().__init__(parent, text="", font=("Arial", 10, "bold"), padx=5, pady=5)
         self.product_data = product_data
         self.siv_code = product_data['SivCode']
@@ -98,10 +100,20 @@ class ProductFrame(tk.LabelFrame):
         self.image_cards = []
         self.on_product_update = on_product_update 
         self.on_empty = on_empty
+        self.search_url = search_url
         
         # Title
-        title = f"{self.siv_code} - {product_data.get('SivName','')} - {product_data.get('SivCode2','')} - {product_data.get('SivComId','')}"
-        tk.Label(self, text=title, font=("Arial", 11, "bold"), fg="blue").pack(anchor="w")
+        title_text = f"{self.siv_code} - {product_data.get('SivName','')} - {product_data.get('SivCode2','')} - {product_data.get('SivComId','')}"
+        self.lbl_title = tk.Label(self, text=title_text, font=("Arial", 11, "bold"), fg="blue", cursor="hand2")
+        self.lbl_title.pack(anchor="w")
+        
+        # Copy to clipboard
+        self.lbl_title.bind("<Button-1>", self._copy_to_clipboard)
+        
+        # Go to Page Button
+        if self.search_url:
+            btn_link = tk.Button(self, text="Přejít na stránku", font=("Arial", 8), command=self._open_page)
+            btn_link.pack(anchor="w", padx=2, pady=(0, 5))
         
         # Images Container (Grid)
         self.grid_frame = tk.Frame(self)
@@ -111,6 +123,19 @@ class ProductFrame(tk.LabelFrame):
         self.loading_lbl.pack()
         
         threading.Thread(target=self._load_images, args=(image_urls,), daemon=True).start()
+
+    def _copy_to_clipboard(self, event):
+        self.clipboard_clear()
+        self.clipboard_append(self.lbl_title.cget("text"))
+        self.update() # Keep clipboard
+        # Visual feedback?
+        original_fg = self.lbl_title.cget("fg")
+        self.lbl_title.config(fg="green")
+        self.after(500, lambda: self.lbl_title.config(fg=original_fg))
+
+    def _open_page(self):
+        if self.search_url:
+            webbrowser.open(self.search_url)
         
     def _load_images(self, urls):
         # Fetch images

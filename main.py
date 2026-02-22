@@ -72,7 +72,9 @@ class MainApp(tk.Tk):
         bottom_bar = ttk.Frame(self, padding=10)
         bottom_bar.pack(fill="x")
         
-        ttk.Button(bottom_bar, text="Uložit a další várka", command=self.save_and_next).pack(side="right", padx=20)
+        # Buttons (packed side=right means first packed is rightmost)
+        ttk.Button(bottom_bar, text="Uložit a další várka", command=self.save_and_next).pack(side="right", padx=5)
+        ttk.Button(bottom_bar, text="Přeskočit várku", command=self.skip_batch).pack(side="right", padx=5)
         
         self.product_frames = []
 
@@ -105,8 +107,9 @@ class MainApp(tk.Tk):
         lbl_status.pack()
         
         def on_progress(done, total):
-            modal.after(0, lambda: progress.config(maximum=total, value=done))
-            modal.after(0, lambda: lbl_status.config(text=f"{done} / {total}"))
+            if modal.winfo_exists():
+                modal.after(0, lambda: progress.config(maximum=total, value=done) if progress.winfo_exists() else None)
+                modal.after(0, lambda: lbl_status.config(text=f"{done} / {total}") if lbl_status.winfo_exists() else None)
             
         def on_finished():
             modal.after(0, lambda: messagebox.showinfo("Hotovo", "Přednačítání dokončeno."))
@@ -116,11 +119,23 @@ class MainApp(tk.Tk):
         
         ttk.Button(modal, text="Zrušit", command=lambda: [self.preloader.cancel(), modal.destroy()]).pack(pady=20)
 
+    def skip_batch(self):
+        if not self.product_frames: return
+        # Mark all current as seen (ignored) but don't save any images
+        if messagebox.askyesno("Potvrzení", "Opravdu přeskočit celou várku? Tyto produkty se označí jako zpracované."):
+             for pf in self.product_frames:
+                 self.review_service.db.mark_as_seen(pf.siv_code)
+             self.load_next_batch()
+
     def load_next_batch(self):
+        # Reset Scroll
+        self.canvas.yview_moveto(0)
+        
         # Clear current
         for widget in self.scrollable_frame.winfo_children():
             widget.destroy()
         self.product_frames = []
+
         
         items = self.review_service.get_batch()
         if not items:
@@ -128,15 +143,29 @@ class MainApp(tk.Tk):
             return
             
         import json
+        from constants import SUPPLIERS_CONFIG
         
         for item in items:
             try:
                 urls = json.loads(item['image_urls'])
             except: urls = []
             
+            # Resolve Search URL
+            search_url = None
+            siv_com_id = item.get('SivComId')
+            # Iterate config to find matching ID
+            for name, conf in SUPPLIERS_CONFIG.items():
+                if conf.get("id") == siv_com_id:
+                     tmpl = conf.get("search_url_template")
+                     if tmpl:
+                         try:
+                             search_url = tmpl.format(item['SivCode'])
+                         except: pass
+                     break
+            
             # TODO: Filter URLs if they match "Blacklist Library" (Similarity Check)
             
-            pf = ProductFrame(self.scrollable_frame, dict(item), urls, self.review_service, None, on_empty=self._on_product_empty)
+            pf = ProductFrame(self.scrollable_frame, dict(item), urls, self.review_service, None, on_empty=self._on_product_empty, search_url=search_url)
             pf.pack(fill="x", pady=5)
             self.product_frames.append(pf)
 
@@ -186,7 +215,7 @@ class MainApp(tk.Tk):
     def open_settings(self):
         modal = tk.Toplevel(self)
         modal.title("Nastavení")
-        modal.geometry("400x500")
+        modal.geometry("400x600")
         
         ttk.Label(modal, text="Povolení dodavatelé:").pack(pady=10)
         
